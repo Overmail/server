@@ -1,5 +1,7 @@
 package dev.babies.overmail
 
+import dev.babies.overmail.api.configureAuthentication
+import dev.babies.overmail.api.configureRouting
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.ImapConfig
 import dev.babies.overmail.mail.daemon.ImapConfigurationManager
@@ -11,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
+val BASE_URL = System.getenv("BASE_URL") ?: "http://localhost"
+
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
         .start(wait = true)
@@ -21,6 +25,7 @@ fun Application.module() {
         Database.init()
     }
     configureSerialization()
+    configureAuthentication()
     configureRouting()
 
     val imapConfigs = Database
@@ -28,7 +33,7 @@ fun Application.module() {
         .map { ImapConfigurationManager(it) }
 
     CoroutineScope(Dispatchers.IO).launch {
-        imapConfigs.forEach { it.start() }
+        //imapConfigs.forEach { it.start() }
     }
 
     this.monitor.subscribe(ApplicationStopped) {
