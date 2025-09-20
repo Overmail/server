@@ -1,6 +1,7 @@
 package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.IMAPFolder
+import dev.babies.overmail.api.web.realtime.folders.folderChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import jakarta.mail.BodyPart
@@ -267,10 +268,15 @@ class ImapFolderSynchronizer(
                 rawEmail = null
             }
 
+            var isReadChanged = false
             val email = Database.query {
+
                 existingEmail?.apply {
+                    if(this.isRead != isSeen) {
+                        this.isRead = isSeen
+                        isReadChanged = true
+                    }
                     this.isRemoved = false
-                    this.isRead = message.isSet(Flags.Flag.SEEN)
                     if (this@apply.folder.id.value != databaseFolder.id.value) this@apply.folder = databaseFolder
                 } ?: Email.new {
                     this.subject = message.subject
@@ -285,6 +291,8 @@ class ImapFolderSynchronizer(
                     this.rawSource = rawEmail!! // should never be null if the email was inserted before
                 }
             }
+
+            if (isReadChanged) folderChange(this.databaseFolder.id.value)
 
             if (existingEmail == null) Database.query {
                 senderIds

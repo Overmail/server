@@ -2,6 +2,7 @@ package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.DefaultFolder
 import com.sun.mail.imap.IMAPFolder
+import dev.babies.overmail.api.web.realtime.folders.folderChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.ImapConfig
 import dev.babies.overmail.data.model.ImapFolder
@@ -57,6 +58,8 @@ class ImapFolderManager(
         folders.forEach { folder ->
             val folderName = folder.name
 
+            var hasChanges = false
+
             val dbFolder = Database.query {
                 ImapFolder
                     .find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName eq folderName) }
@@ -64,6 +67,7 @@ class ImapFolderManager(
                     ?.apply {
                         if (this@apply.folderName != folderName) {
                             this@apply.folderName = folderName
+                            hasChanges = true
                         }
                     }
                     ?: ImapFolder.new {
@@ -73,6 +77,10 @@ class ImapFolderManager(
                     }.also {
                         logger.info("Created folder ${it.folderName} with id ${it.id.value}")
                     }
+            }
+
+            if (hasChanges) CoroutineScope(Dispatchers.IO).launch {
+                folderChange(dbFolder.id.value)
             }
 
             recursiveInitFolders(folder, dbFolder)

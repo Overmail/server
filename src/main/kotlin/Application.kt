@@ -2,6 +2,7 @@ package dev.babies.overmail
 
 import dev.babies.overmail.api.configureAuthentication
 import dev.babies.overmail.api.configureRouting
+import dev.babies.overmail.api.configureWebSockets
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.ImapConfig
 import dev.babies.overmail.mail.daemon.ImapConfigurationManager
@@ -25,6 +26,7 @@ fun Application.module() {
         Database.init()
     }
     configureSerialization()
+    configureWebSockets()
     configureAuthentication()
     configureRouting()
 
@@ -33,7 +35,7 @@ fun Application.module() {
         .map { ImapConfigurationManager(it) }
 
     CoroutineScope(Dispatchers.IO).launch {
-        //imapConfigs.forEach { it.start() }
+        imapConfigs.forEach { it.start() }
     }
 
     this.monitor.subscribe(ApplicationStopped) {
