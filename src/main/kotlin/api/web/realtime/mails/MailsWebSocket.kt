@@ -17,6 +17,7 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.leftJoin
 import org.jetbrains.exposed.v1.jdbc.andWhere
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
 fun Route.mailsWebSocket() {
@@ -65,7 +66,7 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
     return Emails
         .leftJoin(ImapConfigs, { ImapConfigs.id }, { Emails.imapConfig })
         .leftJoin(ImapFolders, { ImapFolders.id }, { Emails.folder })
-        .selectAll()
+        .select(Emails.columns)
         .where { ImapConfigs.owner eq userId }
         .andWhere { ImapFolders.id eq filterFolderId }
         .let {
