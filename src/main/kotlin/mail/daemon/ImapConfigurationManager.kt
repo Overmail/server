@@ -27,6 +27,13 @@ class ImapConfigurationManager(
             put("mail.imap.connectionpooltimeout", "60000")
             put("mail.imaps.connectionpooltimeout", "60000")
 
+            put("mail.imap.partialfetch", "false")
+            put("mail.imaps.partialfetch", "false")
+
+            // Increase the maximum message size allowed
+            put("mail.imap.fetchsize", 1000000)
+            put("mail.imaps.fetchsize", 1000000)
+
             // enable debug logs
             if (isDebug) put("mail.debug", "true")
         }

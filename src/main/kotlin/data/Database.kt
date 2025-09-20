@@ -10,7 +10,7 @@ object Database {
     private val host = System.getenv("DB_HOST") ?: "localhost:5432"
     private val database = System.getenv("DB_DATABASE") ?: "overmail"
     private val user = System.getenv("DB_USER") ?: "vocusdev"
-    private val password = System.getenv("DB_PASSWORD") ?: ""
+    private val password = System.getenv("DB_PASSWORD") ?: "vocus"
     val url = "jdbc:postgresql://$host/$database"
 
     val db by lazy {

@@ -38,6 +38,6 @@ object Emails : IntIdTable("emails") {
     val imapConfig = reference("imap_config", ImapConfigs, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE)
     val folder = reference("folder", ImapFolders, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE)
     val folderUid = long("folder_uid")
-    val rawSource = text("raw_source")
+    val rawSource = blob("raw_source")
     val isRemoved = bool("is_removed").default(false)
 }

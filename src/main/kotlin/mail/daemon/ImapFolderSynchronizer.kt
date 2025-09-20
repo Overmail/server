@@ -5,11 +5,7 @@ import dev.babies.overmail.api.web.realtime.folders.folderChange
 import dev.babies.overmail.api.web.realtime.mails.emailChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
-import jakarta.mail.BodyPart
-import jakarta.mail.FetchProfile
-import jakarta.mail.Flags
-import jakarta.mail.Message
-import jakarta.mail.Multipart
+import jakarta.mail.*
 import jakarta.mail.event.MessageCountEvent
 import jakarta.mail.event.MessageCountListener
 import jakarta.mail.internet.InternetAddress
@@ -20,6 +16,7 @@ import kotlinx.coroutines.sync.withLock
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.notInList
+import org.jetbrains.exposed.v1.core.statements.api.ExposedBlob
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
@@ -28,7 +25,7 @@ import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
-const val IMPORT_CHUNKSIZE = 10
+const val IMPORT_CHUNK_SIZE = 20
 
 class ImapFolderSynchronizer(
     private val imapConfig: ImapConfig,
@@ -120,10 +117,10 @@ class ImapFolderSynchronizer(
                         compareByDescending<Message> { folder.getUID(it) !in existingEmailIds }
                             .thenByDescending { it.sentDate }
                     )
-                    .chunked(IMPORT_CHUNKSIZE)
+                    .chunked(IMPORT_CHUNK_SIZE)
                     .map { it.toTypedArray() }
                     .forEachIndexed { i, messages ->
-                        logger.debug("Importing batch ${i + 1} of ${folder.messageCount / IMPORT_CHUNKSIZE + 1}")
+                        logger.debug("Importing batch ${i + 1} of ${folder.messageCount / IMPORT_CHUNK_SIZE + 1}")
 
                         val fetchProfile = FetchProfile()
                         fetchProfile.add(FetchProfile.Item.ENVELOPE)
@@ -176,7 +173,7 @@ class ImapFolderSynchronizer(
 
     suspend fun insertOrSkipEmail(message: Message, uId: Long, isReadOnly: Boolean) {
         val identifier = message.getHeader("Message-ID")?.firstOrNull() ?: "no-id"
-        mutexMap.getOrPut(identifier to imapConfig.id.value, { Mutex() }).withLock {
+        mutexMap.getOrPut(identifier to imapConfig.id.value) { Mutex() }.withLock {
             val existingEmail = Database.query {
                 Emails
                     .select(Emails.columns)
@@ -289,7 +286,7 @@ class ImapFolderSynchronizer(
                     this.folder = this@ImapFolderSynchronizer.databaseFolder
                     this.imapConfig = this@ImapFolderSynchronizer.imapConfig
                     this.folderUid = uId
-                    this.rawSource = rawEmail!! // should never be null if the email was inserted before
+                    this.rawSource = ExposedBlob(rawEmail!!.toByteArray(Charsets.UTF_8)) // should never be null if the email was inserted before
                 }
             }
 
