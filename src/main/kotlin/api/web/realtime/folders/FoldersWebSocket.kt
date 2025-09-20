@@ -2,6 +2,8 @@ package dev.babies.overmail.api.web.realtime.folders
 
 import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.web.realtime.RealtimeManager
+import dev.babies.overmail.api.web.realtime.RealtimeSubscription
+import dev.babies.overmail.api.web.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import io.ktor.server.auth.*
@@ -20,14 +22,24 @@ fun Route.foldersWebSocket() {
             val principal = this.call.principal<JWTPrincipal>()!!
             val userId = principal.payload.getClaim("id").asInt()
             val user = Database.query { User.findById(userId)!! }
-            RealtimeManager.addSession(user.id.value, this)
+
+            val session = RealtimeSubscription(
+                userId = user.id.value,
+                type = RealtimeSubscriptionType.Folders,
+                session = this
+            )
+
+            RealtimeManager.addSession(
+                userId = user.id.value,
+                session = session
+            )
 
             try {
                 pushFoldersToSession(this, Database.query { getFoldersForUserId(user.id.value, null) })
 
                 for (frame in incoming) { frame as? Frame.Text ?: continue }
             } finally {
-                RealtimeManager.removeSession(user.id.value, this)
+                RealtimeManager.removeSession(user.id.value, session)
             }
         }
     }
@@ -60,7 +72,7 @@ private fun getFoldersForUserId(userId: Int, filterFolderId: Int?): List<FolderW
         )
         .where {
             ((ImapConfigs.owner eq userId) and (ImapFolders.parentFolder neq null))
-                .apply { if (filterFolderId != null) this.and(ImapFolders.id eq filterFolderId) }
+                .let { if (filterFolderId != null) it.and(ImapFolders.id eq filterFolderId) else it }
         }
         .groupBy(ImapFolders.id, ImapConfigs.id)
         .orderBy(ImapFolders.id)
@@ -86,8 +98,8 @@ suspend fun folderChange(folderId: Int) {
     if (Database.query { folder.parentFolder } == null) return
     val user = Database.query { folder.imapConfig.owner }
     val newFolderDto = Database.query { getFoldersForUserId(user.id.value, folderId) }
-    RealtimeManager.getSessions(user.id.value).forEach { session ->
-        pushFoldersToSession(session, newFolderDto)
+    RealtimeManager.getSessions(user.id.value, RealtimeSubscriptionType.Folders).forEach { session ->
+        pushFoldersToSession(session.session, newFolderDto)
     }
 }
 
@@ -100,9 +112,9 @@ sealed class FolderWebSocketEvent {
     ): FolderWebSocketEvent() {
         @Serializable
         data class Folder(
+            @SerialName("id") val id: String,
             @SerialName("name") val name: String,
             @SerialName("unread_count") val unreadCount: Int,
-            @SerialName("id") val id: String,
             @SerialName("account_id") val accountId: Int,
             @SerialName("parent_id") val parentId: String?
         )

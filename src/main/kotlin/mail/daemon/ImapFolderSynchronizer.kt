@@ -2,6 +2,7 @@ package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.IMAPFolder
 import dev.babies.overmail.api.web.realtime.folders.folderChange
+import dev.babies.overmail.api.web.realtime.mails.emailChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import jakarta.mail.BodyPart
@@ -292,7 +293,10 @@ class ImapFolderSynchronizer(
                 }
             }
 
-            if (isReadChanged) folderChange(this.databaseFolder.id.value)
+            if (isReadChanged) {
+                folderChange(this.databaseFolder.id.value)
+                emailChange(email.id.value)
+            }
 
             if (existingEmail == null) Database.query {
                 senderIds
