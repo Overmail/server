@@ -6,12 +6,19 @@ import org.jetbrains.exposed.v1.jdbc.SchemaUtils
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 object Database {
+
+    private val host = System.getenv("DB_HOST") ?: "localhost:5432"
+    private val database = System.getenv("DB_DATABASE") ?: "overmail"
+    private val user = System.getenv("DB_USER") ?: "vocusdev"
+    private val password = System.getenv("DB_PASSWORD") ?: ""
+    val url = "jdbc:postgresql://$host/$database"
+
     val db by lazy {
         Database.connect(
-            url = "jdbc:postgresql://localhost:5432/overmail",
+            url = url,
             driver = "org.postgresql.Driver",
-            user = "vocusdev",
-            password = "vocus"
+            user = user,
+            password = password
         )
     }
     fun init() {
