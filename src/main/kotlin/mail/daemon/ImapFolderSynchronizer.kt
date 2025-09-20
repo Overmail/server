@@ -120,7 +120,7 @@ class ImapFolderSynchronizer(
                     .chunked(IMPORT_CHUNK_SIZE)
                     .map { it.toTypedArray() }
                     .forEachIndexed { i, messages ->
-                        logger.debug("Importing batch ${i + 1} of ${folder.messageCount / IMPORT_CHUNK_SIZE + 1}")
+                        logger.info("Importing batch ${i + 1} of ${folder.messageCount / IMPORT_CHUNK_SIZE + 1}")
 
                         val fetchProfile = FetchProfile()
                         fetchProfile.add(FetchProfile.Item.ENVELOPE)
