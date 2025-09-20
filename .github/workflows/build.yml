@@ -79,7 +79,7 @@ jobs:
           with:
             push: true
             context: .
-            file: package.Dockerfile
+            file: Dockerfile
             tags: ghcr.io/overmail/overmail-backend:latest
 
   dependency-submission:
