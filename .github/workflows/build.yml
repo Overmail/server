@@ -80,7 +80,7 @@ jobs:
             push: true
             context: .
             file: package.Dockerfile
-            tags: ghcr.io/${{ github.repository_owner }}/overmail-backend:latest
+            tags: ghcr.io/overmail/overmail-backend:latest
 
   dependency-submission:
     name: 📊 Submit Dependency Graph
