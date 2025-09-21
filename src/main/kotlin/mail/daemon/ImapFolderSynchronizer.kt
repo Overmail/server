@@ -354,8 +354,13 @@ class ImapFolderSynchronizer(
     }
 
     private fun getEmailUserOrCreate(name: String, email: String): EmailUser {
+        val name = name
+            .trim()
+            .dropLastWhile { it == '\'' }
+            .dropWhile { it == '\'' }
+            .takeIf { it.isNotEmpty() }
         return EmailUser.find { EmailUsers.email eq email }.firstOrNull() ?: EmailUser.new {
-            this.displayName = name
+            this.displayName = name ?: email
             this.email = email
         }
     }
