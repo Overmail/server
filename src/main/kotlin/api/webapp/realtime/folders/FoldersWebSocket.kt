@@ -1,9 +1,9 @@
-package dev.babies.overmail.api.web.realtime.folders
+package dev.babies.overmail.api.webapp.realtime.folders
 
 import dev.babies.overmail.api.AUTHENTICATION_NAME
-import dev.babies.overmail.api.web.realtime.RealtimeManager
-import dev.babies.overmail.api.web.realtime.RealtimeSubscription
-import dev.babies.overmail.api.web.realtime.RealtimeSubscriptionType
+import dev.babies.overmail.api.webapp.realtime.RealtimeManager
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import io.ktor.server.auth.*

@@ -1,9 +1,9 @@
-package dev.babies.overmail.api.web.realtime.mails
+package dev.babies.overmail.api.webapp.realtime.mails
 
 import dev.babies.overmail.api.AUTHENTICATION_NAME
-import dev.babies.overmail.api.web.realtime.RealtimeManager
-import dev.babies.overmail.api.web.realtime.RealtimeSubscription
-import dev.babies.overmail.api.web.realtime.RealtimeSubscriptionType
+import dev.babies.overmail.api.webapp.realtime.RealtimeManager
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import dev.babies.overmail.json
@@ -89,7 +89,7 @@ private fun Emails.filterForUserAndFolder(userId: Int, folderId: Int) = this
     .where { ImapConfigs.owner eq userId }
     .andWhere { ImapFolders.id eq folderId }
 
-private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: Int?, limit: Int?, offset: Long?): List<MailWebSocketEvent.NewMails.Mail> {
+private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: Int?, limit: Int?, offset: Long?): List<MailsWebSocketEvent.NewMails.Mail> {
     return Emails
         .filterForUserAndFolder(userId, filterFolderId)
         .let {
@@ -107,7 +107,7 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
         }
         .map { Email.wrapRow(it) }
         .map { email ->
-            MailWebSocketEvent.NewMails.Mail(
+            MailsWebSocketEvent.NewMails.Mail(
                 id = email.id.value.toString(),
                 subject = email.subject,
                 from = email.sentBy.joinToString { it.displayName },
@@ -122,11 +122,11 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
 }
 
 suspend fun sendMailCountToSession(session: RealtimeSubscription, totalMails: Long, fetchedMails: Long) {
-    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(totalMails, fetchedMails))
+    session.session.sendSerialized<MailsWebSocketEvent>(MailsWebSocketEvent.MetadataChanged(totalMails, fetchedMails))
 }
 
-suspend fun pushMailsToSession(session: RealtimeSubscription, mails: List<MailWebSocketEvent.NewMails.Mail>) {
-    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.NewMails(mails))
+suspend fun pushMailsToSession(session: RealtimeSubscription, mails: List<MailsWebSocketEvent.NewMails.Mail>) {
+    session.session.sendSerialized<MailsWebSocketEvent>(MailsWebSocketEvent.NewMails(mails))
 }
 
 suspend fun emailChange(emailId: Int) {
@@ -143,12 +143,12 @@ fun getEmailCount(userId: Int, folderInt: Int) = Emails
     .count()
 
 @Serializable
-sealed class MailWebSocketEvent {
+sealed class MailsWebSocketEvent {
     @Serializable
     @SerialName("new-mails")
     data class NewMails(
         val mails: List<Mail>
-    ): MailWebSocketEvent() {
+    ): MailsWebSocketEvent() {
         @Serializable
         data class Mail(
             @SerialName("id") val id: String,
@@ -166,7 +166,7 @@ sealed class MailWebSocketEvent {
     data class MetadataChanged(
         @SerialName("total_mails") val totalMails: Long,
         @SerialName("fetched_mails") val fetchedMails: Long
-    ): MailWebSocketEvent()
+    ): MailsWebSocketEvent()
 }
 
 @Serializable

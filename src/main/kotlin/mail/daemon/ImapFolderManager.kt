@@ -2,7 +2,7 @@ package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.DefaultFolder
 import com.sun.mail.imap.IMAPFolder
-import dev.babies.overmail.api.web.realtime.folders.folderChange
+import dev.babies.overmail.api.webapp.realtime.folders.folderChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.ImapConfig
 import dev.babies.overmail.data.model.ImapFolder

@@ -1,4 +1,4 @@
-package dev.babies.overmail.api.web.realtime
+package dev.babies.overmail.api.webapp.realtime
 
 import io.ktor.server.websocket.*
 import kotlinx.coroutines.sync.Mutex
@@ -29,7 +29,7 @@ object RealtimeManager {
 }
 
 enum class RealtimeSubscriptionType {
-    Folders, Mails
+    Folders, Mails, Mail
 }
 
 data class RealtimeSubscription(val userId: Int, val type: RealtimeSubscriptionType, val session: WebSocketServerSession)

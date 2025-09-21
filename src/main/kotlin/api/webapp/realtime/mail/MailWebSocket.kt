@@ -1,0 +1,78 @@
+package dev.babies.overmail.api.webapp.realtime.mail
+
+import dev.babies.overmail.api.AUTHENTICATION_NAME
+import dev.babies.overmail.api.webapp.realtime.RealtimeManager
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
+import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
+import dev.babies.overmail.data.Database
+import dev.babies.overmail.data.model.Email
+import dev.babies.overmail.data.model.User
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.jwt.JWTPrincipal
+import io.ktor.server.auth.principal
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.route
+import io.ktor.server.websocket.sendSerialized
+import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.send
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+fun Route.mailWebSocket() {
+    authenticate(AUTHENTICATION_NAME) {
+        route("/{mailId}") {
+            webSocket {
+                val principal = this.call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("id").asInt()
+                val user = Database.query { User.findById(userId)!! }
+                val mailId = this.call.parameters["mailId"]?.toInt()!!
+
+                val mail = Database.query { Email.findById(mailId) }
+                if (mail == null) {
+                    send("Mail not found")
+                    return@webSocket
+                }
+
+                if (Database.query { mail.imapConfig.owner.id.value != userId }) {
+                    send("You don't have access to this mail")
+                    return@webSocket
+                }
+
+                val session = RealtimeSubscription(
+                    userId = user.id.value,
+                    type = RealtimeSubscriptionType.Mail,
+                    session = this
+                )
+
+                RealtimeManager.addSession(
+                    userId = user.id.value,
+                    session = session
+                )
+
+                try {
+                    val sentBy = Database.query { mail.sentBy.joinToString { it.displayName } }
+                    sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(
+                        subject = mail.subject,
+                        sentAt = mail.sentAt.epochSeconds,
+                        sentBy = sentBy,
+                        hasHtmlBody = mail.htmlBody != null
+                    ))
+                } finally {
+                    RealtimeManager.removeSession(user.id.value, session)
+                }
+            }
+        }
+    }
+}
+
+@Serializable
+sealed class MailWebSocketEvent {
+        @Serializable
+    @SerialName("metadata")
+    data class MetadataChanged(
+        @SerialName("subject") val subject: String?,
+        @SerialName("sent_at") val sentAt: Long,
+        @SerialName("sent_by") val sentBy: String,
+        @SerialName("has_html_body") val hasHtmlBody: Boolean,
+    ): MailWebSocketEvent()
+}

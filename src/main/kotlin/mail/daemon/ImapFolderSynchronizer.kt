@@ -1,8 +1,8 @@
 package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.IMAPFolder
-import dev.babies.overmail.api.web.realtime.folders.folderChange
-import dev.babies.overmail.api.web.realtime.mails.emailChange
+import dev.babies.overmail.api.webapp.realtime.folders.folderChange
+import dev.babies.overmail.api.webapp.realtime.mails.emailChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import jakarta.mail.*
@@ -279,7 +279,9 @@ class ImapFolderSynchronizer(
                     if (this@apply.folder.id.value != databaseFolder.id.value) this@apply.folder = databaseFolder
                 } ?: Email.new {
                     this.subject = message.subject
-                    this.textBody = textBody.toString()
+                    this.textBody = textBody
+                        .toString()
+                        .replace("\r\n", "\n")
                     this.htmlBody = htmlBody.toString()
                     this.isRead = message.isSet(Flags.Flag.SEEN)
                     this.sentAt = Instant.fromEpochMilliseconds(message.sentDate.toInstant().toEpochMilli())
