@@ -110,17 +110,18 @@ class ImapFolderSynchronizer(
                         .where { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
                         .map { it[Emails.folderUid] }
                 }
+                    .distinct()
+                    .sorted()
 
-                folder.messages
+                val pendingMessages = folder.messages
                     .toList()
-                    .sortedWith(
-                        compareByDescending<Message> { folder.getUID(it) !in existingEmailIds }
-                            .thenByDescending { it.sentDate }
-                    )
+                    .filter { folder.getUID(it) !in existingEmailIds }
                     .chunked(IMPORT_CHUNK_SIZE)
+
+                pendingMessages
                     .map { it.toTypedArray() }
                     .forEachIndexed { i, messages ->
-                        logger.info("Importing batch ${i + 1} of ${folder.messageCount / IMPORT_CHUNK_SIZE + 1}")
+                        logger.info("Importing batch ${i + 1} of ${pendingMessages.size + 1}")
 
                         val fetchProfile = FetchProfile()
                         fetchProfile.add(FetchProfile.Item.ENVELOPE)

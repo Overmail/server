@@ -65,7 +65,7 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
     return Emails
         .leftJoin(ImapConfigs, { ImapConfigs.id }, { Emails.imapConfig })
         .leftJoin(ImapFolders, { ImapFolders.id }, { Emails.folder })
-        .select(Emails.columns)
+        .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
         .where { ImapConfigs.owner eq userId }
         .andWhere { ImapFolders.id eq filterFolderId }
         .let {

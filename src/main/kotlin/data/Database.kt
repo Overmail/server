@@ -21,6 +21,7 @@ object Database {
             password = password
         )
     }
+
     fun init() {
         query {
             SchemaUtils.create(Users)
