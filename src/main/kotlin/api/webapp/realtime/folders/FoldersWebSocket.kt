@@ -3,7 +3,6 @@ package dev.babies.overmail.api.webapp.realtime.folders
 import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
-import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import io.ktor.server.auth.*
@@ -23,9 +22,8 @@ fun Route.foldersWebSocket() {
             val userId = principal.payload.getClaim("id").asInt()
             val user = Database.query { User.findById(userId)!! }
 
-            val session = RealtimeSubscription(
+            val session = RealtimeSubscription.FoldersSubscription(
                 userId = user.id.value,
-                type = RealtimeSubscriptionType.Folders,
                 session = this
             )
 
@@ -89,16 +87,21 @@ private fun getFoldersForUserId(userId: Int, filterFolderId: Int?): List<FolderW
         }
 }
 
-suspend fun pushFoldersToSession(session: WebSocketServerSession, folders: List<FolderWebSocketEvent.NewFolders.Folder>) {
+private suspend fun pushFoldersToSession(session: WebSocketServerSession, folders: List<FolderWebSocketEvent.NewFolders.Folder>) {
     session.sendSerialized<FolderWebSocketEvent>(FolderWebSocketEvent.NewFolders(folders))
 }
 
-suspend fun folderChange(folderId: Int) {
+/**
+ * Call when a folder is created or renamed or when a mail-seen flag is changed.
+ * This will update the folder list for the user who owns the folder.
+ * @param folderId the id of the folder that was created or renamed
+ */
+suspend fun notifyFolderChange(folderId: Int) {
     val folder = Database.query { ImapFolder.findById(folderId)!! }
     if (Database.query { folder.parentFolder } == null) return
     val user = Database.query { folder.imapConfig.owner }
     val newFolderDto = Database.query { getFoldersForUserId(user.id.value, folderId) }
-    RealtimeManager.getSessions(user.id.value, RealtimeSubscriptionType.Folders).forEach { session ->
+    RealtimeManager.getFoldersWatcher(user.id.value).forEach { session ->
         pushFoldersToSession(session.session, newFolderDto)
     }
 }

@@ -3,7 +3,6 @@ package dev.babies.overmail.api.webapp.realtime.mail
 import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
-import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.Email
 import dev.babies.overmail.data.model.User
@@ -38,9 +37,9 @@ fun Route.mailWebSocket() {
                     return@webSocket
                 }
 
-                val session = RealtimeSubscription(
+                val session = RealtimeSubscription.MailSubscription(
                     userId = user.id.value,
-                    type = RealtimeSubscriptionType.Mail,
+                    emailId = mailId,
                     session = this
                 )
 
@@ -50,19 +49,22 @@ fun Route.mailWebSocket() {
                 )
 
                 try {
-                    val sentBy = Database.query { mail.sentBy.joinToString { it.displayName } }
-                    sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(
-                        subject = mail.subject,
-                        sentAt = mail.sentAt.epochSeconds,
-                        sentBy = sentBy,
-                        hasHtmlBody = mail.htmlBody != null
-                    ))
+                    pushMailToSession(session, mail)
                 } finally {
                     RealtimeManager.removeSession(user.id.value, session)
                 }
             }
         }
     }
+}
+
+suspend fun pushMailToSession(session: RealtimeSubscription.MailSubscription, mail: Email) {
+    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(
+        subject = mail.subject,
+        sentAt = mail.sentAt.epochSeconds,
+        sentBy = Database.query { mail.sentBy.joinToString { it.displayName } },
+        hasHtmlBody = mail.htmlBody != null
+    ))
 }
 
 @Serializable

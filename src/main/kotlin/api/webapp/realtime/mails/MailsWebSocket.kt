@@ -3,7 +3,7 @@ package dev.babies.overmail.api.webapp.realtime.mails
 import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
-import dev.babies.overmail.api.webapp.realtime.RealtimeSubscriptionType
+import dev.babies.overmail.api.webapp.realtime.mail.pushMailToSession
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import dev.babies.overmail.json
@@ -43,10 +43,12 @@ fun Route.mailsWebSocket() {
                     return@webSocket
                 }
 
-                val session = RealtimeSubscription(
+                val emailCountOnStart = Database.query { getEmailCount(user.id.value, folderId) }
+                val session = RealtimeSubscription.MailsSubscription(
                     userId = user.id.value,
-                    type = RealtimeSubscriptionType.Mails,
-                    session = this
+                    folderId = folderId,
+                    session = this,
+                    fetched = min(emailCountOnStart, WEBSOCKET_EMAIL_CHUNK_SIZE)
                 )
 
                 RealtimeManager.addSession(
@@ -55,11 +57,7 @@ fun Route.mailsWebSocket() {
                 )
 
                 try {
-                    val emailCountOnStart = Database.query { getEmailCount(user.id.value, folderId) }
-
-                    var fetchedMails = min(emailCountOnStart, WEBSOCKET_EMAIL_CHUNK_SIZE)
-
-                    sendMailCountToSession(session, emailCountOnStart, fetchedMails)
+                    sendMailCountToSession(session, emailCountOnStart, session.fetched)
                     pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = 0L, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
                     for (frame in incoming) {
                         val messageText = frame as? Frame.Text ?: continue
@@ -68,9 +66,9 @@ fun Route.mailsWebSocket() {
                         when (message) {
                             is MailWebSocketMessage.RequestNextChunk -> {
                                 val total = Database.query { getEmailCount(user.id.value, folderId) }
-                                fetchedMails = min(total, message.currentFetchedMails ?: (fetchedMails + WEBSOCKET_EMAIL_CHUNK_SIZE))
-                                sendMailCountToSession(session, total, fetchedMails)
-                                pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = fetchedMails, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
+                                session.fetched = min(total, message.currentFetchedMails ?: (session.fetched + WEBSOCKET_EMAIL_CHUNK_SIZE))
+                                sendMailCountToSession(session, total, session.fetched)
+                                pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = session.fetched, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
                             }
                         }
                     }
@@ -121,20 +119,33 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
         }
 }
 
-suspend fun sendMailCountToSession(session: RealtimeSubscription, totalMails: Long, fetchedMails: Long) {
+suspend fun sendMailCountToSession(session: RealtimeSubscription.MailsSubscription, totalMails: Long, fetchedMails: Long) {
     session.session.sendSerialized<MailsWebSocketEvent>(MailsWebSocketEvent.MetadataChanged(totalMails, fetchedMails))
 }
 
-suspend fun pushMailsToSession(session: RealtimeSubscription, mails: List<MailsWebSocketEvent.NewMails.Mail>) {
+suspend fun pushMailsToSession(session: RealtimeSubscription.MailsSubscription, mails: List<MailsWebSocketEvent.NewMails.Mail>) {
     session.session.sendSerialized<MailsWebSocketEvent>(MailsWebSocketEvent.NewMails(mails))
 }
 
-suspend fun emailChange(emailId: Int) {
+/**
+ * Call when mail is created or changed in the database.
+ * This will update the mail list for the user and the detail mail view.
+ * @param emailId the id of the email that was created or changed
+ */
+suspend fun notifyEmailChange(emailId: Int) {
     val email = Database.query { Email.findById(emailId)!! }
     val user = Database.query { email.imapConfig.owner }
-    val newEmailDto = Database.query { getMailsForUserId(user.id.value, email.folder.id.value, emailId, null, null) }
-    RealtimeManager.getSessions(user.id.value, RealtimeSubscriptionType.Mails).forEach { session ->
+    val folderId = Database.query { email.folder.id.value }
+    val newEmailDto = Database.query { getMailsForUserId(user.id.value, folderId, emailId, null, null) }
+    val count = Database.query {
+        getEmailCount(user.id.value, folderId)
+    }
+    RealtimeManager.getMailsWatcher(user.id.value, folderId).forEach { session ->
         pushMailsToSession(session, newEmailDto)
+        sendMailCountToSession(session, count, session.fetched + 1)
+    }
+    RealtimeManager.getMailWatcher(user.id.value, emailId).forEach { session ->
+        pushMailToSession(session, email)
     }
 }
 

@@ -21,6 +21,29 @@ object RealtimeManager {
         }
     }
 
+    suspend fun getFoldersWatcher(userId: Int): Set<RealtimeSubscription.FoldersSubscription> {
+        return editMutex.withLock {
+            sessions.getOrDefault(userId, emptySet()).filterIsInstance<RealtimeSubscription.FoldersSubscription>().toSet()
+        }
+    }
+
+    suspend fun getMailsWatcher(userId: Int, folderId: Int): Set<RealtimeSubscription.MailsSubscription> {
+        return editMutex.withLock {
+            sessions.getOrDefault(userId, emptySet()).filterIsInstance<RealtimeSubscription.MailsSubscription>()
+                .filter { it.folderId == folderId }
+                .toSet()
+        }
+    }
+
+    suspend fun getMailWatcher(userId: Int, emailId: Int): Set<RealtimeSubscription.MailSubscription> {
+        return editMutex.withLock {
+            sessions.getOrDefault(userId, emptySet()).filterIsInstance<RealtimeSubscription.MailSubscription>()
+                .filter { it.emailId == emailId }
+                .toSet()
+        }
+    }
+
+    @Deprecated("Use special methods instead")
     suspend fun getSessions(userId: Int, type: RealtimeSubscriptionType): Set<RealtimeSubscription> {
         return editMutex.withLock {
             sessions.getOrDefault(userId, emptySet()).filter { it.type == type }.toSet()
@@ -32,4 +55,8 @@ enum class RealtimeSubscriptionType {
     Folders, Mails, Mail
 }
 
-data class RealtimeSubscription(val userId: Int, val type: RealtimeSubscriptionType, val session: WebSocketServerSession)
+sealed class RealtimeSubscription(userId: Int, val type: RealtimeSubscriptionType, session: WebSocketServerSession) {
+    data class FoldersSubscription(val userId: Int, val session: WebSocketServerSession): RealtimeSubscription(userId, RealtimeSubscriptionType.Folders, session)
+    class MailsSubscription(val userId: Int, val folderId: Int, val session: WebSocketServerSession, var fetched: Long): RealtimeSubscription(userId, RealtimeSubscriptionType.Mails, session)
+    data class MailSubscription(val userId: Int, val emailId: Int, val session: WebSocketServerSession): RealtimeSubscription(userId, RealtimeSubscriptionType.Mail, session)
+}

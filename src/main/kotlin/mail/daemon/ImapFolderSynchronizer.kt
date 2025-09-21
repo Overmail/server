@@ -1,8 +1,8 @@
 package dev.babies.overmail.mail.daemon
 
 import com.sun.mail.imap.IMAPFolder
-import dev.babies.overmail.api.webapp.realtime.folders.folderChange
-import dev.babies.overmail.api.webapp.realtime.mails.emailChange
+import dev.babies.overmail.api.webapp.realtime.folders.notifyFolderChange
+import dev.babies.overmail.api.webapp.realtime.mails.notifyEmailChange
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import jakarta.mail.*
@@ -282,7 +282,7 @@ class ImapFolderSynchronizer(
                     this.textBody = textBody
                         .toString()
                         .replace("\r\n", "\n")
-                    this.htmlBody = htmlBody.toString()
+                    this.htmlBody = htmlBody.toString().takeIf { it.isNotBlank() }
                     this.isRead = message.isSet(Flags.Flag.SEEN)
                     this.sentAt = Instant.fromEpochMilliseconds(message.sentDate.toInstant().toEpochMilli())
                     this.emailKey = identifier
@@ -294,8 +294,8 @@ class ImapFolderSynchronizer(
             }
 
             if (isReadChanged) {
-                folderChange(this.databaseFolder.id.value)
-                emailChange(email.id.value)
+                notifyFolderChange(this.databaseFolder.id.value)
+                notifyEmailChange(email.id.value)
             }
 
             if (existingEmail == null) Database.query {
@@ -319,6 +319,11 @@ class ImapFolderSynchronizer(
                             it[this.type] = type
                         }
                     }
+            }
+
+            if (existingEmail == null) {
+                notifyEmailChange(email.id.value)
+                if (!email.isRead) notifyFolderChange(this.databaseFolder.id.value)
             }
         }
     }
