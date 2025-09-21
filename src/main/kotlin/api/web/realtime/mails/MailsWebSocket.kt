@@ -68,7 +68,7 @@ fun Route.mailsWebSocket() {
                         when (message) {
                             is MailWebSocketMessage.RequestNextChunk -> {
                                 val total = Database.query { getEmailCount(user.id.value, folderId) }
-                                fetchedMails = min(total, fetchedMails + WEBSOCKET_EMAIL_CHUNK_SIZE)
+                                fetchedMails = min(total, message.currentFetchedMails ?: (fetchedMails + WEBSOCKET_EMAIL_CHUNK_SIZE))
                                 sendMailCountToSession(session, total, fetchedMails)
                                 pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = fetchedMails, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
                             }
@@ -173,5 +173,7 @@ sealed class MailWebSocketEvent {
 sealed class MailWebSocketMessage {
     @Serializable
     @SerialName("request_next_chunk")
-    object RequestNextChunk: MailWebSocketMessage()
+    data class RequestNextChunk(
+        @SerialName("current_fetched_mails") val currentFetchedMails: Long? = null
+    ): MailWebSocketMessage()
 }
