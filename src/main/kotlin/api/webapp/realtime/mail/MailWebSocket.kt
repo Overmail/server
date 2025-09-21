@@ -3,21 +3,14 @@ package dev.babies.overmail.api.webapp.realtime.mail
 import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
-import dev.babies.overmail.api.webapp.realtime.mails.MailWebSocketMessage
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.Email
 import dev.babies.overmail.data.model.User
-import dev.babies.overmail.json
-import io.ktor.server.auth.authenticate
-import io.ktor.server.auth.jwt.JWTPrincipal
-import io.ktor.server.auth.principal
-import io.ktor.server.routing.Route
-import io.ktor.server.routing.route
-import io.ktor.server.websocket.sendSerialized
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import io.ktor.websocket.send
+import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
+import io.ktor.server.routing.*
+import io.ktor.server.websocket.*
+import io.ktor.websocket.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
