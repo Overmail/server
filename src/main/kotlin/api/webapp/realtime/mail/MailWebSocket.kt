@@ -5,6 +5,7 @@ import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.Email
+import dev.babies.overmail.data.model.RecipientType
 import dev.babies.overmail.data.model.User
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
@@ -59,24 +60,73 @@ fun Route.mailWebSocket() {
 }
 
 suspend fun pushMailToSession(session: RealtimeSubscription.MailSubscription, mail: Email) {
-    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(
-        subject = mail.subject,
-        sentAt = mail.sentAt.epochSeconds,
-        sentBy = Database.query { mail.sentBy.joinToString { it.displayName } },
-        hasHtmlBody = mail.htmlBody != null,
-        isRead = mail.isRead,
-    ))
+    session.session.sendSerialized<MailWebSocketEvent>(
+        MailWebSocketEvent.MetadataChanged(
+            subject = mail.subject,
+            sentAt = mail.sentAt.epochSeconds,
+            sentBy = Database.query { mail.sentBy.joinToString { it.displayName } },
+            sentTo = Database.query {
+                mail.receivedBy.map {
+                    MailWebSocketEvent.MetadataChanged.Recipient(
+                        name = it.recipient.displayName,
+                        email = it.recipient.email,
+                        isMe = it.recipient.email == mail.imapConfig.email,
+                        type = MailWebSocketEvent.MetadataChanged.Recipient.typeToType(it.type)
+                    )
+                }
+            },
+            hasHtmlBody = mail.htmlBody != null,
+            isRead = mail.isRead,
+        )
+    )
+}
+
+suspend fun sendMailDeletedToSession(session: RealtimeSubscription.MailSubscription) {
+    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.Deleted)
 }
 
 @Serializable
 sealed class MailWebSocketEvent {
-        @Serializable
+    @Serializable
     @SerialName("metadata")
     data class MetadataChanged(
         @SerialName("subject") val subject: String?,
         @SerialName("sent_at") val sentAt: Long,
         @SerialName("sent_by") val sentBy: String,
+        @SerialName("sent_to") val sentTo: List<Recipient>,
         @SerialName("has_html_body") val hasHtmlBody: Boolean,
         @SerialName("is_read") val isRead: Boolean,
-    ): MailWebSocketEvent()
+    ) : MailWebSocketEvent() {
+
+        @Serializable
+        data class Recipient(
+            @SerialName("name") val name: String,
+            @SerialName("email") val email: String,
+            @SerialName("is_me") val isMe: Boolean,
+            @SerialName("type") val type: Type,
+        ) {
+
+            @Serializable
+            enum class Type {
+                @SerialName("to")
+                To,
+                @SerialName("cc")
+                Cc,
+                @SerialName("bcc")
+                Bcc
+            }
+
+            companion object {
+                fun typeToType(type: RecipientType) = when (type) {
+                    RecipientType.To -> Type.To
+                    RecipientType.Cc -> Type.Cc
+                    RecipientType.Bcc -> Type.Bcc
+                }
+            }
+        }
+    }
+
+    @Serializable
+    @SerialName("deleted")
+    object Deleted : MailWebSocketEvent()
 }

@@ -4,6 +4,7 @@ import dev.babies.overmail.api.AUTHENTICATION_NAME
 import dev.babies.overmail.api.webapp.realtime.RealtimeManager
 import dev.babies.overmail.api.webapp.realtime.RealtimeSubscription
 import dev.babies.overmail.api.webapp.realtime.mail.pushMailToSession
+import dev.babies.overmail.api.webapp.realtime.mail.sendMailDeletedToSession
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import dev.babies.overmail.json
@@ -146,6 +147,23 @@ suspend fun notifyEmailChange(emailId: Int) {
     }
     RealtimeManager.getMailWatcher(user.id.value, emailId).forEach { session ->
         pushMailToSession(session, email)
+    }
+}
+
+/**
+ * Call before mail is deleted in the database.
+ */
+suspend fun notifyEmailDelete(emailId: Int) {
+    val user = Database.query { Email.findById(emailId)!!.imapConfig.owner }
+    val folderId = Database.query { Email.findById(emailId)!!.folder.id.value }
+    val count = Database.query {
+        getEmailCount(user.id.value, folderId)
+    }
+    RealtimeManager.getMailsWatcher(user.id.value, folderId).forEach { session ->
+        sendMailCountToSession(session, count, session.fetched - 1)
+    }
+    RealtimeManager.getMailWatcher(user.id.value, emailId).forEach { session ->
+        sendMailDeletedToSession(session)
     }
 }
 

@@ -3,6 +3,7 @@ package dev.babies.overmail.mail.daemon
 import com.sun.mail.imap.IMAPFolder
 import dev.babies.overmail.api.webapp.realtime.folders.notifyFolderChange
 import dev.babies.overmail.api.webapp.realtime.mails.notifyEmailChange
+import dev.babies.overmail.api.webapp.realtime.mails.notifyEmailDelete
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
 import jakarta.mail.*
@@ -76,13 +77,18 @@ class ImapFolderSynchronizer(
 
                             val uid = folder.getUID(message)
                             if (message.isSet(Flags.Flag.DELETED)) {
-                                Database.query {
+                                val email = Database.query {
                                     Email
                                         .find { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folderUid eq uid)}
                                         .firstOrNull()
-                                        ?.apply {
-                                            this.isRemoved = true
-                                        }
+                                }
+
+                                if (email != null) CoroutineScope(Dispatchers.IO).launch {
+                                    notifyEmailDelete(email.id.value)
+                                    if (!email.isRead) notifyFolderChange(databaseFolder.id.value)
+                                    Database.query {
+                                        email.isRemoved = true
+                                    }
                                 }
                                 return@addMessageChangedListener
                             }
