@@ -43,56 +43,81 @@ class ImapFolderSynchronizer(
         val importConnection = connectionFactory()
 
         idleJob = CoroutineScope(Dispatchers.IO).launch {
-            idlingConnection.use { idlingConnection ->
-                val folderName = Database.query { databaseFolder.getPath().joinToString(idlingConnection.defaultFolder.separator.toString()) }
-                val folder = idlingConnection.getFolder(folderName) as IMAPFolder
-                folder.open(IMAPFolder.READ_WRITE)
+            // Resolve the full path of the folder once (path segments), separator is applied per-connection
+            val pathSegments = Database.query { databaseFolder.getPath() }
 
-                folder.addMessageCountListener(object : MessageCountListener {
-                    override fun messagesAdded(e: MessageCountEvent?) {
-                        if (e == null) return
-                        logger.info("${e.messages.size} new message(s) in ${folder.name}")
+            while (isActive) {
+                val store = connectionFactory()
+                try {
+                    store.use { s ->
+                        val folderName = pathSegments.joinToString(s.defaultFolder.separator.toString())
+                        val folder = s.getFolder(folderName) as IMAPFolder
+                        folder.open(IMAPFolder.READ_WRITE)
 
-                        CoroutineScope(Dispatchers.IO).launch {
-                            e.messages.forEach {
-                                insertOrSkipEmail(it, folder.getUID(it), isReadOnly = false)
+                        // Register listeners for this folder instance
+                        folder.addMessageCountListener(object : MessageCountListener {
+                            override fun messagesAdded(e: MessageCountEvent?) {
+                                if (e == null) return
+                                logger.info("${e.messages.size} new message(s) in ${folder.name}")
+
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    e.messages.forEach {
+                                        insertOrSkipEmail(it, folder.getUID(it), isReadOnly = false)
+                                    }
+                                }
+                            }
+
+                            override fun messagesRemoved(e: MessageCountEvent?) {}
+                        })
+
+                        folder.addMessageChangedListener { event ->
+                            val message = event.message
+                            logger.info("Message ${message.messageNumber} changed")
+
+                            val uid = folder.getUID(message)
+                            if (message.isSet(Flags.Flag.DELETED)) {
+                                Database.query {
+                                    Email
+                                        .find { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folderUid eq uid)}
+                                        .firstOrNull()
+                                        ?.apply {
+                                            this.isRemoved = true
+                                        }
+                                }
+                                return@addMessageChangedListener
+                            }
+
+                            CoroutineScope(Dispatchers.IO).launch {
+                                insertOrSkipEmail(message, uid, isReadOnly = false)
                             }
                         }
 
-                    }
-
-                    override fun messagesRemoved(e: MessageCountEvent?) {}
-                })
-
-                folder.addMessageChangedListener { event ->
-                    val message = event.message
-                    logger.info("Message ${message.messageNumber} changed")
-
-                    val uid = folder.getUID(message)
-                    if (message.isSet(Flags.Flag.DELETED)) {
-                        Database.query {
-                            Email
-                                .find { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folderUid eq uid)}
-                                .firstOrNull()
-                                ?.apply {
-                                    this.isRemoved = true
-                                }
+                        logger.info("Watching for new messages in ${folder.fullName}")
+                        while (isActive) {
+                            try {
+                                folder.idle()
+                                // short noop to force event dispatch in some servers
+                                folder.messageCount
+                            } catch (e: FolderClosedException) {
+                                logger.warn("Folder closed during IDLE on ${folder.fullName}: ${e.message}")
+                                break // recreate connection and folder
+                            } catch (e: MessagingException) {
+                                logger.warn("Messaging exception during IDLE on ${folder.fullName}: ${e.message}")
+                                break // recreate connection and folder
+                            } catch (e: Exception) {
+                                logger.warn("Unexpected exception during IDLE: ${e.message}", e)
+                                break // recreate connection and folder
+                            }
                         }
-                        return@addMessageChangedListener
                     }
-
-
-                    CoroutineScope(Dispatchers.IO).launch {
-                        insertOrSkipEmail(message, uid, isReadOnly = false)
-                    }
+                } catch (e: Exception) {
+                    logger.error("Recreating IMAP connection after error: ${e.message}", e)
+                } finally {
+                    try { store.close() } catch (_: Exception) {}
                 }
 
-                logger.info("Watching for new messages in ${folder.fullName}")
-                while (true) {
-                    folder.idle()
-                    folder.messageCount
-                    delay(5.seconds)
-                }
+                // Backoff before retrying connection
+                delay(2.seconds)
             }
         }
 
@@ -121,7 +146,7 @@ class ImapFolderSynchronizer(
                 pendingMessages
                     .map { it.toTypedArray() }
                     .forEachIndexed { i, messages ->
-                        logger.info("Importing batch ${i + 1} of ${pendingMessages.size + 1}")
+                        logger.info("Importing batch ${i + 1} of ${pendingMessages.size}")
 
                         val fetchProfile = FetchProfile()
                         fetchProfile.add(FetchProfile.Item.ENVELOPE)

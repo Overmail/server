@@ -34,6 +34,9 @@ class ImapConfigurationManager(
             put("mail.imap.fetchsize", 1000000)
             put("mail.imaps.fetchsize", 1000000)
 
+            // Some servers send invalid Content-Transfer-Encoding like "utf-8"; ignore unknown encodings
+            put("mail.mime.ignoreunknownencoding", "true")
+
             // enable debug logs
             if (isDebug) put("mail.debug", "true")
         }
