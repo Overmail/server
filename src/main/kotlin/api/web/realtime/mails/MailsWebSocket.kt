@@ -6,6 +6,7 @@ import dev.babies.overmail.api.web.realtime.RealtimeSubscription
 import dev.babies.overmail.api.web.realtime.RealtimeSubscriptionType
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.data.model.*
+import dev.babies.overmail.json
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.routing.*
@@ -18,6 +19,9 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.leftJoin
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.select
+import kotlin.math.min
+
+private const val WEBSOCKET_EMAIL_CHUNK_SIZE = 100L
 
 fun Route.mailsWebSocket() {
     authenticate(AUTHENTICATION_NAME) {
@@ -51,8 +55,25 @@ fun Route.mailsWebSocket() {
                 )
 
                 try {
-                    pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null) })
-                    for (frame in incoming) { frame as? Frame.Text ?: continue }
+                    val emailCountOnStart = Database.query { getEmailCount(user.id.value, folderId) }
+
+                    var fetchedMails = min(emailCountOnStart, WEBSOCKET_EMAIL_CHUNK_SIZE)
+
+                    sendMailCountToSession(session, emailCountOnStart, fetchedMails)
+                    pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = 0L, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
+                    for (frame in incoming) {
+                        val messageText = frame as? Frame.Text ?: continue
+                        val message = json.decodeFromString<MailWebSocketMessage>(messageText.readText())
+
+                        when (message) {
+                            is MailWebSocketMessage.RequestNextChunk -> {
+                                val total = Database.query { getEmailCount(user.id.value, folderId) }
+                                fetchedMails = min(total, fetchedMails + WEBSOCKET_EMAIL_CHUNK_SIZE)
+                                sendMailCountToSession(session, total, fetchedMails)
+                                pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = fetchedMails, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
+                            }
+                        }
+                    }
                 } finally {
                     RealtimeManager.removeSession(user.id.value, session)
                 }
@@ -61,18 +82,29 @@ fun Route.mailsWebSocket() {
     }
 }
 
-private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: Int?): List<MailWebSocketEvent.NewMails.Mail> {
+private fun Emails.filterForUserAndFolder(userId: Int, folderId: Int) = this
+    .leftJoin(ImapConfigs, { ImapConfigs.id }, { Emails.imapConfig })
+    .leftJoin(ImapFolders, { ImapFolders.id }, { Emails.folder })
+    .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
+    .where { ImapConfigs.owner eq userId }
+    .andWhere { ImapFolders.id eq folderId }
+
+private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: Int?, limit: Int?, offset: Long?): List<MailWebSocketEvent.NewMails.Mail> {
     return Emails
-        .leftJoin(ImapConfigs, { ImapConfigs.id }, { Emails.imapConfig })
-        .leftJoin(ImapFolders, { ImapFolders.id }, { Emails.folder })
-        .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
-        .where { ImapConfigs.owner eq userId }
-        .andWhere { ImapFolders.id eq filterFolderId }
+        .filterForUserAndFolder(userId, filterFolderId)
         .let {
             if (filterEmailId != null) it.andWhere { Emails.id eq filterEmailId }
             else it
         }
         .orderBy(Emails.sentAt, SortOrder.DESC)
+        .let {
+            if (limit != null) it.limit(limit)
+            else it
+        }
+        .let {
+            if (offset != null) it.offset(offset)
+            else it
+        }
         .map { Email.wrapRow(it) }
         .map { email ->
             MailWebSocketEvent.NewMails.Mail(
@@ -89,6 +121,10 @@ private fun getMailsForUserId(userId: Int, filterFolderId: Int, filterEmailId: I
         }
 }
 
+suspend fun sendMailCountToSession(session: RealtimeSubscription, totalMails: Long, fetchedMails: Long) {
+    session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.MetadataChanged(totalMails, fetchedMails))
+}
+
 suspend fun pushMailsToSession(session: RealtimeSubscription, mails: List<MailWebSocketEvent.NewMails.Mail>) {
     session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.NewMails(mails))
 }
@@ -96,11 +132,15 @@ suspend fun pushMailsToSession(session: RealtimeSubscription, mails: List<MailWe
 suspend fun emailChange(emailId: Int) {
     val email = Database.query { Email.findById(emailId)!! }
     val user = Database.query { email.imapConfig.owner }
-    val newEmailDto = Database.query { getMailsForUserId(user.id.value, email.folder.id.value, emailId) }
+    val newEmailDto = Database.query { getMailsForUserId(user.id.value, email.folder.id.value, emailId, null, null) }
     RealtimeManager.getSessions(user.id.value, RealtimeSubscriptionType.Mails).forEach { session ->
         pushMailsToSession(session, newEmailDto)
     }
 }
+
+fun getEmailCount(userId: Int, folderInt: Int) = Emails
+    .filterForUserAndFolder(userId, folderInt)
+    .count()
 
 @Serializable
 sealed class MailWebSocketEvent {
@@ -120,4 +160,18 @@ sealed class MailWebSocketEvent {
             @SerialName("preview_text") val previewText: String,
         )
     }
+
+    @Serializable
+    @SerialName("metadata")
+    data class MetadataChanged(
+        @SerialName("total_mails") val totalMails: Long,
+        @SerialName("fetched_mails") val fetchedMails: Long
+    ): MailWebSocketEvent()
+}
+
+@Serializable
+sealed class MailWebSocketMessage {
+    @Serializable
+    @SerialName("request_next_chunk")
+    object RequestNextChunk: MailWebSocketMessage()
 }
