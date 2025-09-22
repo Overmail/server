@@ -127,7 +127,7 @@ class ImapFolderSynchronizer(
             }
         }
 
-        importJob = CoroutineScope(Dispatchers.IO).launch {
+        backgroundImport = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
                 runImport()
                 delay(3.minutes)
