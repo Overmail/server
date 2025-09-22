@@ -18,7 +18,6 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.statements.api.ExposedBlob
-import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.slf4j.LoggerFactory
@@ -141,53 +140,55 @@ class ImapFolderSynchronizer(
         backgroundImport?.cancel()
     }
 
+    val importLock = Mutex()
     /**
      * Starts the import process in the background if it's not already running.
      */
     private fun runImport() {
         if (importJob?.isActive == true) return
         importJob?.cancel()
-        val importConnection = connectionFactory()
         importJob = CoroutineScope(Dispatchers.IO).launch {
-            val folderName = Database.query { databaseFolder.getPath().joinToString(importConnection.defaultFolder.separator.toString()) }
-            val folder = importConnection.getFolder(folderName) as IMAPFolder
-            folder.open(IMAPFolder.READ_ONLY)
+            importLock.withLock {
+                val importConnection = connectionFactory()
+                val folderName = Database.query { databaseFolder.getPath().joinToString(importConnection.defaultFolder.separator.toString()) }
+                val folder = importConnection.getFolder(folderName) as IMAPFolder
+                folder.open(IMAPFolder.READ_ONLY)
 
-            run importMails@{
-                logger.info("Importing all messages in ${folder.name}")
+                run importMails@{
+                    logger.info("Importing all messages in ${folder.name}")
 
-                val existingEmailIds = Database.query {
-                    Emails
-                        .select(Emails.folderUid)
-                        .where { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
-                        .map { it[Emails.folderUid] }
-                }
-                    .distinct()
-                    .sorted()
+                    val existingEmailIds = Database.query {
+                        Emails
+                            .select(Emails.folderUid)
+                            .where { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
+                            .map { it[Emails.folderUid] }
+                    }
+                        .distinct()
+                        .sorted()
 
-                val pendingMessages = folder.messages
-                    .toList()
-                    .filter { folder.getUID(it) !in existingEmailIds }
-                    .chunked(IMPORT_CHUNK_SIZE)
+                    val pendingMessages = folder.messages
+                        .toList()
+                        .filter { folder.getUID(it) !in existingEmailIds }
+                        .chunked(IMPORT_CHUNK_SIZE)
 
-                pendingMessages
-                    .map { it.toTypedArray() }
-                    .forEachIndexed { i, messages ->
-                        logger.info("Importing batch ${i + 1} of ${pendingMessages.size}")
+                    pendingMessages
+                        .map { it.toTypedArray() }
+                        .forEachIndexed { i, messages ->
+                            logger.info("Importing batch ${i + 1} of ${pendingMessages.size}")
 
-                        val fetchProfile = FetchProfile()
-                        fetchProfile.add(FetchProfile.Item.ENVELOPE)
-                        fetchProfile.add(FetchProfile.Item.FLAGS)
-                        fetchProfile.add(FetchProfile.Item.CONTENT_INFO)
-                        fetchProfile.add("Message-ID")
-                        folder.fetch(messages, fetchProfile)
+                            val fetchProfile = FetchProfile()
+                            fetchProfile.add(FetchProfile.Item.ENVELOPE)
+                            fetchProfile.add(FetchProfile.Item.FLAGS)
+                            fetchProfile.add(FetchProfile.Item.CONTENT_INFO)
+                            fetchProfile.add("Message-ID")
+                            folder.fetch(messages, fetchProfile)
 
-                        messages.forEach { message ->
-                            try {
-                                insertOrSkipEmail(message, folder.getUID(message), isReadOnly = true)
-                            } catch (e: Exception) {
-                                logger.error(
-                                    """
+                            messages.forEach { message ->
+                                try {
+                                    insertOrSkipEmail(message, folder.getUID(message), isReadOnly = true)
+                                } catch (e: Exception) {
+                                    logger.error(
+                                        """
                             Failed to import message ${folder.getUID(message)} in ${folder.name}.
                             Subject: ${message.subject}
                             From: ${message.from.joinToString(", ")}
@@ -195,24 +196,28 @@ class ImapFolderSynchronizer(
                             Exception:
                             
                         """.trimIndent() + e.stackTraceToString()
-                                )
+                                    )
+                                }
                             }
                         }
-                    }
 
-                logger.info("Finished importing messages in ${folder.name}")
-            }
-
-            run deleteMails@{
-                logger.info("Deleting all messages in ${folder.name} that don't exist on the IMAP server")
-
-                val serverMessageUids = folder.messages.toList().map { folder.getUID(it) }
-
-                Database.query {
-                    Emails.deleteWhere { (Emails.imapConfig eq this@ImapFolderSynchronizer.imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) and (Emails.folderUid notInList serverMessageUids) }
+                    logger.info("Finished importing messages in ${folder.name}")
                 }
 
-                logger.info("Finished deleting messages in ${folder.name}")
+                run deleteMails@{
+                    val serverMessageUids = folder.messages.toList().map { folder.getUID(it) }
+
+                    Database.query {
+                        Emails
+                            .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
+                            .where{ (Emails.imapConfig eq this@ImapFolderSynchronizer.imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) and (Emails.folderUid notInList serverMessageUids) }
+                            .map { Email.wrapRow(it) }
+                            .onEach { logger.info("Deleting email ${it.subject} (${it.id.value}) in ${folder.name}") }
+                            .forEach { it.delete() }
+                    }
+
+                    logger.info("Finished deleting messages in ${folder.name}")
+                }
             }
         }
     }
@@ -225,7 +230,7 @@ class ImapFolderSynchronizer(
             val existingEmail = Database.query {
                 Emails
                     .select(Emails.columns)
-                    .where { (Emails.emailKey eq identifier) and (Emails.imapConfig eq imapConfig.id.value) }
+                    .where { (Emails.emailKey eq identifier) and (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
                     .firstOrNull()
                     ?.let { Email.wrapRow(it) }
             }
