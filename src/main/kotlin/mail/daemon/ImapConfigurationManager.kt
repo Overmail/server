@@ -18,8 +18,8 @@ class ImapConfigurationManager(
         val props = Properties().apply {
             if (imapConfig.ssl) put("mail.store.protocol", "imaps")
             // Ensure IDLE returns periodically on both imap and imaps
-            put("mail.imap.idletimeout", "600000")
-            put("mail.imaps.idletimeout", "600000")
+            put("mail.imap.idletimeout", "60000")
+            put("mail.imaps.idletimeout", "60000")
             // Allow enough concurrent folder connections for per-folder IDLE
             put("mail.imap.connectionpoolsize", 500)
             put("mail.imaps.connectionpoolsize", 500)

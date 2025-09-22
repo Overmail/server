@@ -23,6 +23,7 @@ import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -36,13 +37,11 @@ class ImapFolderSynchronizer(
 
     var idleJob: Job? = null
     var importJob: Job? = null
+    var backgroundImport: Job? = null
 
     private val logger = LoggerFactory.getLogger("${imapConfig.email}/${databaseFolder.folderName}")
 
     fun start() {
-        val idlingConnection = connectionFactory()
-        val importConnection = connectionFactory()
-
         idleJob = CoroutineScope(Dispatchers.IO).launch {
             // Resolve the full path of the folder once (path segments), separator is applied per-connection
             val pathSegments = Database.query { databaseFolder.getPath() }
@@ -104,6 +103,7 @@ class ImapFolderSynchronizer(
                                 folder.idle()
                                 // short noop to force event dispatch in some servers
                                 folder.messageCount
+                                delay(5.seconds)
                             } catch (e: FolderClosedException) {
                                 logger.warn("Folder closed during IDLE on ${folder.fullName}: ${e.message}")
                                 break // recreate connection and folder
@@ -128,7 +128,28 @@ class ImapFolderSynchronizer(
         }
 
         importJob = CoroutineScope(Dispatchers.IO).launch {
-            val folderName = Database.query { databaseFolder.getPath().joinToString(idlingConnection.defaultFolder.separator.toString()) }
+            while (isActive) {
+                runImport()
+                delay(3.minutes)
+            }
+        }
+    }
+
+    fun stop() {
+        idleJob?.cancel()
+        importJob?.cancel()
+        backgroundImport?.cancel()
+    }
+
+    /**
+     * Starts the import process in the background if it's not already running.
+     */
+    private fun runImport() {
+        if (importJob?.isActive == true) return
+        importJob?.cancel()
+        val importConnection = connectionFactory()
+        importJob = CoroutineScope(Dispatchers.IO).launch {
+            val folderName = Database.query { databaseFolder.getPath().joinToString(importConnection.defaultFolder.separator.toString()) }
             val folder = importConnection.getFolder(folderName) as IMAPFolder
             folder.open(IMAPFolder.READ_ONLY)
 
@@ -194,11 +215,6 @@ class ImapFolderSynchronizer(
                 logger.info("Finished deleting messages in ${folder.name}")
             }
         }
-    }
-
-    fun stop() {
-        idleJob?.cancel()
-        importJob?.cancel()
     }
 
     val mutexMap = mutableMapOf<Pair<String, Int>, Mutex>()

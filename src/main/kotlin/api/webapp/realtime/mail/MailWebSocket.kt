@@ -12,6 +12,7 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.io.IOException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -51,6 +52,7 @@ fun Route.mailWebSocket() {
                     for (frame in incoming) {
                         frame as? Frame.Text ?: continue
                     }
+                } catch (_: IOException) {
                 } finally {
                     RealtimeManager.removeSession(user.id.value, session)
                 }

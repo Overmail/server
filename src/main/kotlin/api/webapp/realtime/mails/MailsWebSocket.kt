@@ -13,6 +13,7 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.io.IOException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -59,7 +60,17 @@ fun Route.mailsWebSocket() {
 
                 try {
                     sendMailCountToSession(session, emailCountOnStart, session.fetched)
-                    pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = 0L, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
+                    pushMailsToSession(
+                        session,
+                        Database.query {
+                            getMailsForUserId(
+                                user.id.value,
+                                folderId,
+                                null,
+                                offset = 0L,
+                                limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()
+                            )
+                        })
                     for (frame in incoming) {
                         val messageText = frame as? Frame.Text ?: continue
                         val message = json.decodeFromString<MailWebSocketMessage>(messageText.readText())
@@ -67,12 +78,26 @@ fun Route.mailsWebSocket() {
                         when (message) {
                             is MailWebSocketMessage.RequestNextChunk -> {
                                 val total = Database.query { getEmailCount(user.id.value, folderId) }
-                                session.fetched = min(total, message.currentFetchedMails ?: (session.fetched + WEBSOCKET_EMAIL_CHUNK_SIZE))
+                                session.fetched = min(
+                                    total,
+                                    message.currentFetchedMails ?: (session.fetched + WEBSOCKET_EMAIL_CHUNK_SIZE)
+                                )
                                 sendMailCountToSession(session, total, session.fetched)
-                                pushMailsToSession(session, Database.query { getMailsForUserId(user.id.value, folderId, null, offset = session.fetched, limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()) })
+                                pushMailsToSession(
+                                    session,
+                                    Database.query {
+                                        getMailsForUserId(
+                                            user.id.value,
+                                            folderId,
+                                            null,
+                                            offset = session.fetched,
+                                            limit = WEBSOCKET_EMAIL_CHUNK_SIZE.toInt()
+                                        )
+                                    })
                             }
                         }
                     }
+                } catch (_: IOException) {
                 } finally {
                     RealtimeManager.removeSession(user.id.value, session)
                 }
