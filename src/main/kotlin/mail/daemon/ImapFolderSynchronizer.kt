@@ -34,161 +34,139 @@ class ImapFolderSynchronizer(
     private val connectionFactory: ImapConfigurationManager.ConnectionFactory
 ) {
 
-    var idleJob: Job? = null
-    var importJob: Job? = null
-    var backgroundImport: Job? = null
-
     private val logger = LoggerFactory.getLogger("${imapConfig.email}/${databaseFolder.folderName}")
+    val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun start() {
-        idleJob = CoroutineScope(Dispatchers.IO).launch {
-            // Resolve the full path of the folder once (path segments), separator is applied per-connection
-            val pathSegments = Database.query { databaseFolder.getPath() }
 
-            while (isActive) {
-                val store = connectionFactory()
-                try {
-                    store.use { s ->
-                        val folderName = pathSegments.joinToString(s.defaultFolder.separator.toString())
-                        val folder = s.getFolder(folderName) as IMAPFolder
-                        folder.open(IMAPFolder.READ_WRITE)
+        mainScope.launch {
+            launch idleWatcher@{
+                // Resolve the full path of the folder once (path segments), separator is applied per-connection
+                val pathSegments = Database.query { databaseFolder.getPath() }
 
-                        // Register listeners for this folder instance
-                        folder.addMessageCountListener(object : MessageCountListener {
-                            override fun messagesAdded(e: MessageCountEvent?) {
-                                if (e == null) return
-                                logger.info("${e.messages.size} new message(s) in ${folder.name}")
+                while (isActive) {
+                    val store = connectionFactory()
+                    try {
+                        store.use { s ->
+                            val folderName = pathSegments.joinToString(s.defaultFolder.separator.toString())
+                            val folder = s.getFolder(folderName) as IMAPFolder
+                            folder.open(IMAPFolder.READ_WRITE)
+
+                            // Register listeners for this folder instance
+                            folder.addMessageCountListener(object : MessageCountListener {
+                                override fun messagesAdded(e: MessageCountEvent?) {
+                                    if (e == null) return
+                                    logger.info("${e.messages.size} new message(s) in ${folder.name}")
+
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        e.messages.forEach {
+                                            insertOrSkipEmail(it, folder.getUID(it), isReadOnly = false)
+                                        }
+                                    }
+                                }
+
+                                override fun messagesRemoved(e: MessageCountEvent?) {}
+                            })
+
+                            folder.addMessageChangedListener { event ->
+                                val message = event.message
+                                logger.info("Message ${message.messageNumber} changed")
+
+                                val uid = folder.getUID(message)
+                                if (message.isSet(Flags.Flag.DELETED)) {
+                                    val email = Database.query {
+                                        Email
+                                            .find { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folderUid eq uid)}
+                                            .firstOrNull()
+                                    }
+
+                                    if (email != null) CoroutineScope(Dispatchers.IO).launch {
+                                        notifyEmailDelete(email.id.value)
+                                        if (!email.isRead) notifyFolderChange(databaseFolder.id.value)
+                                        Database.query {
+                                            email.isRemoved = true
+                                        }
+                                    }
+                                    return@addMessageChangedListener
+                                }
 
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    e.messages.forEach {
-                                        insertOrSkipEmail(it, folder.getUID(it), isReadOnly = false)
-                                    }
+                                    insertOrSkipEmail(message, uid, isReadOnly = false)
                                 }
                             }
 
-                            override fun messagesRemoved(e: MessageCountEvent?) {}
-                        })
-
-                        folder.addMessageChangedListener { event ->
-                            val message = event.message
-                            logger.info("Message ${message.messageNumber} changed")
-
-                            val uid = folder.getUID(message)
-                            if (message.isSet(Flags.Flag.DELETED)) {
-                                val email = Database.query {
-                                    Email
-                                        .find { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folderUid eq uid)}
-                                        .firstOrNull()
-                                }
-
-                                if (email != null) CoroutineScope(Dispatchers.IO).launch {
-                                    notifyEmailDelete(email.id.value)
-                                    if (!email.isRead) notifyFolderChange(databaseFolder.id.value)
-                                    Database.query {
-                                        email.isRemoved = true
-                                    }
-                                }
-                                return@addMessageChangedListener
-                            }
-
-                            CoroutineScope(Dispatchers.IO).launch {
-                                insertOrSkipEmail(message, uid, isReadOnly = false)
-                            }
-                        }
-
-                        logger.info("Watching for new messages in ${folder.fullName}")
-                        while (isActive) {
-                            try {
-                                folder.idle()
-                                // short noop to force event dispatch in some servers
-                                folder.messageCount
-                                delay(5.seconds)
-                            } catch (e: FolderClosedException) {
-                                logger.warn("Folder closed during IDLE on ${folder.fullName}: ${e.message}")
-                                break // recreate connection and folder
-                            } catch (e: MessagingException) {
-                                logger.warn("Messaging exception during IDLE on ${folder.fullName}: ${e.message}")
-                                break // recreate connection and folder
-                            } catch (e: Exception) {
-                                logger.warn("Unexpected exception during IDLE: ${e.message}", e)
-                                break // recreate connection and folder
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    logger.error("Recreating IMAP connection after error: ${e.message}", e)
-                } finally {
-                    try { store.close() } catch (_: Exception) {}
-                }
-
-                // Backoff before retrying connection
-                delay(2.seconds)
-            }
-        }
-
-        backgroundImport = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                runImport()
-                delay(3.minutes)
-            }
-        }
-    }
-
-    fun stop() {
-        idleJob?.cancel()
-        importJob?.cancel()
-        backgroundImport?.cancel()
-    }
-
-    val importLock = Mutex()
-    /**
-     * Starts the import process in the background if it's not already running.
-     */
-    private fun runImport() {
-        if (importJob?.isActive == true) return
-        importJob?.cancel()
-        importJob = CoroutineScope(Dispatchers.IO).launch {
-            importLock.withLock {
-                val importConnection = connectionFactory()
-                val folderName = Database.query { databaseFolder.getPath().joinToString(importConnection.defaultFolder.separator.toString()) }
-                val folder = importConnection.getFolder(folderName) as IMAPFolder
-                folder.open(IMAPFolder.READ_ONLY)
-
-                run importMails@{
-                    logger.info("Importing all messages in ${folder.name}")
-
-                    val existingEmailIds = Database.query {
-                        Emails
-                            .select(Emails.folderUid)
-                            .where { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
-                            .map { it[Emails.folderUid] }
-                    }
-                        .distinct()
-                        .sorted()
-
-                    val pendingMessages = folder.messages
-                        .toList()
-                        .filter { folder.getUID(it) !in existingEmailIds }
-                        .chunked(IMPORT_CHUNK_SIZE)
-
-                    pendingMessages
-                        .map { it.toTypedArray() }
-                        .forEachIndexed { i, messages ->
-                            logger.info("Importing batch ${i + 1} of ${pendingMessages.size}")
-
-                            val fetchProfile = FetchProfile()
-                            fetchProfile.add(FetchProfile.Item.ENVELOPE)
-                            fetchProfile.add(FetchProfile.Item.FLAGS)
-                            fetchProfile.add(FetchProfile.Item.CONTENT_INFO)
-                            fetchProfile.add("Message-ID")
-                            folder.fetch(messages, fetchProfile)
-
-                            messages.forEach { message ->
+                            logger.info("Watching for new messages in ${folder.fullName}")
+                            while (isActive) {
                                 try {
-                                    insertOrSkipEmail(message, folder.getUID(message), isReadOnly = true)
+                                    folder.idle()
+                                    // short noop to force event dispatch in some servers
+                                    folder.messageCount
+                                    delay(5.seconds)
+                                } catch (e: FolderClosedException) {
+                                    logger.warn("Folder closed during IDLE on ${folder.fullName}: ${e.message}")
+                                    break // recreate connection and folder
+                                } catch (e: MessagingException) {
+                                    logger.warn("Messaging exception during IDLE on ${folder.fullName}: ${e.message}")
+                                    break // recreate connection and folder
                                 } catch (e: Exception) {
-                                    logger.error(
-                                        """
+                                    logger.warn("Unexpected exception during IDLE: ${e.message}", e)
+                                    break // recreate connection and folder
+                                }
+                            }
+                            folder.close(false)
+                        }
+                    } catch (e: Exception) {
+                        logger.error("Recreating IMAP connection after error: ${e.message}", e)
+                    } finally {
+                        try { store.close() } catch (_: Exception) {}
+                    }
+
+                    // Backoff before retrying connection
+                    delay(2.seconds)
+                }
+            }
+            launch backgroundUpdater@{
+                while (isActive) {
+                    val importConnection = connectionFactory()
+                    val folderName = Database.query { databaseFolder.getPath().joinToString(importConnection.defaultFolder.separator.toString()) }
+                    val folder = importConnection.getFolder(folderName) as IMAPFolder
+                    folder.open(IMAPFolder.READ_ONLY)
+
+                    run importMails@{
+                        logger.info("Importing all messages in ${folder.name}")
+
+                        val existingEmailIds = Database.query {
+                            Emails
+                                .select(Emails.folderUid)
+                                .where { (Emails.imapConfig eq imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) }
+                                .map { it[Emails.folderUid] }
+                        }
+                            .distinct()
+                            .sorted()
+
+                        val pendingMessages = folder.messages
+                            .toList()
+                            .filter { folder.getUID(it) !in existingEmailIds }
+                            .chunked(IMPORT_CHUNK_SIZE)
+
+                        pendingMessages
+                            .map { it.toTypedArray() }
+                            .forEachIndexed { i, messages ->
+                                logger.info("Importing batch ${i + 1} of ${pendingMessages.size}")
+
+                                val fetchProfile = FetchProfile()
+                                fetchProfile.add(FetchProfile.Item.ENVELOPE)
+                                fetchProfile.add(FetchProfile.Item.FLAGS)
+                                fetchProfile.add(FetchProfile.Item.CONTENT_INFO)
+                                fetchProfile.add("Message-ID")
+                                folder.fetch(messages, fetchProfile)
+
+                                messages.forEach { message ->
+                                    try {
+                                        insertOrSkipEmail(message, folder.getUID(message), isReadOnly = true)
+                                    } catch (e: Exception) {
+                                        logger.error(
+                                            """
                             Failed to import message ${folder.getUID(message)} in ${folder.name}.
                             Subject: ${message.subject}
                             From: ${message.from.joinToString(", ")}
@@ -196,30 +174,36 @@ class ImapFolderSynchronizer(
                             Exception:
                             
                         """.trimIndent() + e.stackTraceToString()
-                                    )
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                    logger.info("Finished importing messages in ${folder.name}")
-                }
-
-                run deleteMails@{
-                    val serverMessageUids = folder.messages.toList().map { folder.getUID(it) }
-
-                    Database.query {
-                        Emails
-                            .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
-                            .where{ (Emails.imapConfig eq this@ImapFolderSynchronizer.imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) and (Emails.folderUid notInList serverMessageUids) }
-                            .map { Email.wrapRow(it) }
-                            .onEach { logger.info("Deleting email ${it.subject} (${it.id.value}) in ${folder.name}") }
-                            .forEach { it.delete() }
+                        logger.info("Finished importing messages in ${folder.name}")
                     }
 
-                    logger.info("Finished deleting messages in ${folder.name}")
+                    run deleteMails@{
+                        val serverMessageUids = folder.messages.toList().map { folder.getUID(it) }
+
+                        Database.query {
+                            Emails
+                                .select(Emails.id, Emails.subject, Emails.sentAt, Emails.isRead, Emails.textBody)
+                                .where{ (Emails.imapConfig eq this@ImapFolderSynchronizer.imapConfig.id.value) and (Emails.folder eq databaseFolder.id.value) and (Emails.folderUid notInList serverMessageUids) }
+                                .map { Email.wrapRow(it) }
+                                .onEach { logger.info("Deleting email ${it.subject} (${it.id.value}) in ${folder.name}") }
+                                .forEach { it.delete() }
+                        }
+
+                        logger.info("Finished deleting messages in ${folder.name}")
+                    }
+                    delay(3.minutes)
                 }
             }
         }
+    }
+
+    fun stop() {
+        mainScope.cancel()
     }
 
     val mutexMap = mutableMapOf<Pair<String, Int>, Mutex>()
@@ -378,6 +362,7 @@ class ImapFolderSynchronizer(
                 if (!email.isRead) notifyFolderChange(this.databaseFolder.id.value)
             }
         }
+        mutexMap.remove(identifier to imapConfig.id.value)
     }
 
     private fun readMultipart(
