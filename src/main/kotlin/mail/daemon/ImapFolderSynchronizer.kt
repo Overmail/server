@@ -288,6 +288,9 @@ class ImapFolderSynchronizer(
             val htmlBody = StringBuilder()
 
             val isSeen = message.isSet(Flags.Flag.SEEN)
+            if (existingEmail == null) {
+                readMultipart(message.content, textBody, htmlBody)
+            }
 
             var isReadChanged = false
             val email = Database.query {
