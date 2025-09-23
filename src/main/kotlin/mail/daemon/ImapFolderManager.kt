@@ -60,36 +60,34 @@ class ImapFolderManager(
     private fun recursiveInitFolders(parentImap: IMAPFolder, parentDatabase: ImapFolder) {
         val folders = parentImap.list("%").map { it as IMAPFolder }
         folders.forEach { folder ->
-            folder.use { folder ->
-                val folderName = folder.name
+            val folderName = folder.name
 
-                var hasChanges = false
+            var hasChanges = false
 
-                val dbFolder = Database.query {
-                    ImapFolder
-                        .find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName eq folderName) }
-                        .firstOrNull()
-                        ?.apply {
-                            if (this@apply.folderName != folderName) {
-                                this@apply.folderName = folderName
-                                hasChanges = true
-                            }
+            val dbFolder = Database.query {
+                ImapFolder
+                    .find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName eq folderName) }
+                    .firstOrNull()
+                    ?.apply {
+                        if (this@apply.folderName != folderName) {
+                            this@apply.folderName = folderName
+                            hasChanges = true
                         }
-                        ?: ImapFolder.new {
-                            this.imapConfig = this@ImapFolderManager.imapConfig
-                            this.folderName = folderName
-                            this.parentFolder = parentDatabase
-                        }.also {
-                            logger.info("Created folder ${it.folderName} with id ${it.id.value}")
-                        }
-                }
-
-                if (hasChanges) scope.launch {
-                    notifyFolderChange(dbFolder.id.value)
-                }
-
-                recursiveInitFolders(folder, dbFolder)
+                    }
+                    ?: ImapFolder.new {
+                        this.imapConfig = this@ImapFolderManager.imapConfig
+                        this.folderName = folderName
+                        this.parentFolder = parentDatabase
+                    }.also {
+                        logger.info("Created folder ${it.folderName} with id ${it.id.value}")
+                    }
             }
+
+            if (hasChanges) scope.launch {
+                notifyFolderChange(dbFolder.id.value)
+            }
+
+            recursiveInitFolders(folder, dbFolder)
         }
     }
 
