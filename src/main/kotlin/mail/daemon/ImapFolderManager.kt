@@ -29,26 +29,24 @@ class ImapFolderManager(
             val connection = connectionFactory()
             connection.use {  connection ->
                 val defaultFolderImap = connection.defaultFolder as DefaultFolder
-                defaultFolderImap.use { defaultFolderImap ->
-                    val defaultFolderDatabase = Database.query {
-                        ImapFolder
-                            .find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName eq defaultFolderImap.name) }
-                            .firstOrNull()
-                            ?: ImapFolder.new {
-                                this.imapConfig = this@ImapFolderManager.imapConfig
-                                this.folderName = defaultFolderImap.name
-                                this.parentFolder = null
-                            }
-                    }
-
-                    recursiveInitFolders(defaultFolderImap, defaultFolderDatabase)
-
-                    Database.query {
-                        val folders = ImapFolder.find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName neq defaultFolderImap.name) }
-                        folders.forEach { folder ->
-                            val synchronizer = ImapFolderSynchronizer(imapConfig, folder, connectionFactory)
-                            imapFolderSynchronizers[folder.id.value] = synchronizer
+                val defaultFolderDatabase = Database.query {
+                    ImapFolder
+                        .find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName eq defaultFolderImap.name) }
+                        .firstOrNull()
+                        ?: ImapFolder.new {
+                            this.imapConfig = this@ImapFolderManager.imapConfig
+                            this.folderName = defaultFolderImap.name
+                            this.parentFolder = null
                         }
+                }
+
+                recursiveInitFolders(defaultFolderImap, defaultFolderDatabase)
+
+                Database.query {
+                    val folders = ImapFolder.find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderName neq defaultFolderImap.name) }
+                    folders.forEach { folder ->
+                        val synchronizer = ImapFolderSynchronizer(imapConfig, folder, connectionFactory)
+                        imapFolderSynchronizers[folder.id.value] = synchronizer
                     }
                 }
             }
