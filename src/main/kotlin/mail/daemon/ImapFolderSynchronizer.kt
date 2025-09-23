@@ -143,11 +143,17 @@ class ImapFolderSynchronizer(
                             .distinct()
                             .sorted()
 
-                        val pendingMessages = folder.messages
-                            .toList()
+                        val messages = folder.messages.toList()
+
+                        val pendingMessages = messages
                             .filter { folder.getUID(it) !in existingEmailIds }
                             .chunked(IMPORT_CHUNK_SIZE)
 
+                        val existingMessages = messages
+                            .filter { folder.getUID(it) in existingEmailIds }
+                            .chunked(IMPORT_CHUNK_SIZE)
+
+                        if (pendingMessages.isNotEmpty()) logger.info("Found ${pendingMessages.flatten().size} new messages in ${folder.name}")
                         pendingMessages
                             .map { it.toTypedArray() }
                             .forEachIndexed { i, messages ->
@@ -174,6 +180,28 @@ class ImapFolderSynchronizer(
                             
                         """.trimIndent() + e.stackTraceToString()
                                         )
+                                    }
+                                }
+                            }
+
+                        if (existingMessages.isNotEmpty()) logger.info("Updating metadata for ${existingMessages.flatten().size} existing messages in ${folder.name}")
+                        val flagFetchProfile = FetchProfile()
+                        flagFetchProfile.add(FetchProfile.Item.FLAGS)
+                        existingMessages
+                            .forEach { existingMessageChunk ->
+                                folder.fetch(existingMessageChunk.toTypedArray(), flagFetchProfile)
+                                existingMessageChunk.forEach forEachMessage@{ message ->
+                                    val existing = Database.query { Email.find { Emails.folderUid eq folder.getUID(message) and (Emails.imapConfig eq imapConfig.id.value) }.firstOrNull() }
+                                    if (existing == null) {
+                                        logger.warn("Message ${folder.getUID(message)} in ${folder.name} is not in the database, skipping")
+                                        return@forEachMessage
+                                    }
+
+                                    val isRead = message.isSet(Flags.Flag.SEEN)
+                                    if (existing.isRead != isRead) {
+                                        Database.query { existing.isRead = isRead }
+                                        notifyEmailChange(existing.id.value)
+                                        notifyFolderChange(databaseFolder.id.value)
                                     }
                                 }
                             }
