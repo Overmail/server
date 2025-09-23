@@ -36,5 +36,6 @@ kotlin {
     compilerOptions {
         freeCompilerArgs.add("-Xopt-in=kotlin.time.ExperimentalTime")
         freeCompilerArgs.add("-Xnested-type-aliases")
+        freeCompilerArgs.add("-Xcontext-parameters")
     }
 }
