@@ -21,7 +21,6 @@ import org.jetbrains.exposed.v1.core.statements.api.ExposedBlob
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.slf4j.LoggerFactory
-import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -60,7 +59,7 @@ class ImapFolderSynchronizer(
 
                                     CoroutineScope(Dispatchers.IO).launch {
                                         e.messages.forEach {
-                                            insertOrSkipEmail(it, folder.getUID(it), isReadOnly = false)
+                                            insertOrSkipEmail(it, folder.getUID(it))
                                         }
                                     }
                                 }
@@ -91,7 +90,7 @@ class ImapFolderSynchronizer(
                                 }
 
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    insertOrSkipEmail(message, uid, isReadOnly = false)
+                                    insertOrSkipEmail(message, uid)
                                 }
                             }
 
@@ -163,7 +162,7 @@ class ImapFolderSynchronizer(
 
                                 messages.forEach { message ->
                                     try {
-                                        insertOrSkipEmail(message, folder.getUID(message), isReadOnly = true)
+                                        insertOrSkipEmail(message, folder.getUID(message))
                                     } catch (e: Exception) {
                                         logger.error(
                                             """
@@ -208,7 +207,7 @@ class ImapFolderSynchronizer(
 
     val mutexMap = mutableMapOf<Pair<String, Int>, Mutex>()
 
-    suspend fun insertOrSkipEmail(message: Message, uId: Long, isReadOnly: Boolean) {
+    suspend fun insertOrSkipEmail(message: Message, uId: Long) {
         val identifier = message.getHeader("Message-ID")?.firstOrNull() ?: "no-id"
         mutexMap.getOrPut(identifier to imapConfig.id.value) { Mutex() }.withLock {
             val existingEmail = Database.query {
@@ -290,19 +289,6 @@ class ImapFolderSynchronizer(
 
             val isSeen = message.isSet(Flags.Flag.SEEN)
 
-            val rawEmail: String?
-            if (existingEmail == null) {
-                readMultipart(message.content, textBody, htmlBody)
-                val byteArrayOutputStream = ByteArrayOutputStream()
-                message.writeTo(byteArrayOutputStream)
-                rawEmail = byteArrayOutputStream.toString(Charsets.UTF_8.name())
-
-                // set isSeen back to the original state because calling writeTo marks it as seen
-                if (!isReadOnly) message.setFlag(Flags.Flag.SEEN, isSeen)
-            } else {
-                rawEmail = null
-            }
-
             var isReadChanged = false
             val email = Database.query {
 
@@ -325,7 +311,7 @@ class ImapFolderSynchronizer(
                     this.folder = this@ImapFolderSynchronizer.databaseFolder
                     this.imapConfig = this@ImapFolderSynchronizer.imapConfig
                     this.folderUid = uId
-                    this.rawSource = ExposedBlob(rawEmail!!.toByteArray(Charsets.UTF_8)) // should never be null if the email was inserted before
+                    this.rawSource = ExposedBlob(message.inputStream)
                 }
             }
 
