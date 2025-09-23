@@ -291,7 +291,6 @@ class ImapFolderSynchronizer(
 
             var isReadChanged = false
             val email = Database.query {
-
                 existingEmail?.apply {
                     if(this.isRead != isSeen) {
                         this.isRead = isSeen
@@ -313,6 +312,12 @@ class ImapFolderSynchronizer(
                     this.folderUid = uId
                     this.rawSource = ExposedBlob(message.inputStream)
                 }
+            }
+
+            if (existingEmail == null && !isSeen) {
+                // email is new and not read yet, needs to be marked as unread, because the content has been fetched now
+                // thus the email has been probably marked as read by the imap server
+                message.setFlag(Flags.Flag.SEEN, false)
             }
 
             if (isReadChanged) {
