@@ -35,7 +35,7 @@ fun Application.module() {
         .map { ImapConfigurationManager(it) }
 
     CoroutineScope(Dispatchers.IO).launch {
-        imapConfigs.forEach { it.start() }
+        //imapConfigs.forEach { it.start() }
     }
 
     this.monitor.subscribe(ApplicationStopped) {
