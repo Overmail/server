@@ -10,7 +10,7 @@ permissions:
 jobs:
   build-application:
     name: 🔨 Build and Deploy ${{ github.repository }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       -   name: Checkout Code
           uses: actions/checkout@v4
@@ -48,7 +48,7 @@ jobs:
               ~/.gradle/wrapper
   build-docker:
     name: 🐳 Build Docker Image
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       packages: write
@@ -64,8 +64,8 @@ jobs:
       -   name: Set up QEMU
           uses: docker/setup-qemu-action@v3
 
-      -   name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@v3
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       -   name: Log in to GHCR
           uses: docker/login-action@v3
@@ -75,7 +75,7 @@ jobs:
             password: ${{ secrets.GITHUB_TOKEN }}
 
       -   name: Build and push
-          uses: docker/build-push-action@v6
+          uses: useblacksmith/build-push-action@v2
           with:
             push: true
             context: .
@@ -85,7 +85,7 @@ jobs:
 
   dependency-submission:
     name: 📊 Submit Dependency Graph
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: build-application
     if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
     steps:
