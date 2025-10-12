@@ -16,7 +16,6 @@ class ImapFolder(id: EntityID<Int>) : IntEntity(id) {
 
     fun getPath(): List<String> {
         if (parentFolder == null) return listOf(folderName)
-        if (parentFolder?.parentFolder == null) return listOf(folderName)
         return parentFolder?.getPath().orEmpty() + folderName
     }
 }

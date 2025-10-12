@@ -46,13 +46,6 @@ fun Route.foldersWebSocket() {
 }
 
 private fun getFoldersForUserId(userId: Int, filterFolderId: Int?): List<FolderWebSocketEvent.NewFolders.Folder> {
-    val rootFolderId = ImapFolders
-        .leftJoin(ImapConfigs)
-        .select(ImapFolders.id)
-        .where { (ImapConfigs.owner eq userId) and (ImapFolders.parentFolder eq null) }
-        .firstOrNull()
-        ?.let { it[ImapFolders.id].value }
-
     val unreadSum = Sum(
         Case()
             .When(Emails.isRead eq false, intLiteral(1))
@@ -71,7 +64,7 @@ private fun getFoldersForUserId(userId: Int, filterFolderId: Int?): List<FolderW
             unreadSum
         )
         .where {
-            ((ImapConfigs.owner eq userId) and (ImapFolders.parentFolder neq null))
+            (ImapConfigs.owner eq userId)
                 .let { if (filterFolderId != null) it.and(ImapFolders.id eq filterFolderId) else it }
         }
         .groupBy(ImapFolders.id, ImapConfigs.id)
@@ -82,9 +75,7 @@ private fun getFoldersForUserId(userId: Int, filterFolderId: Int?): List<FolderW
                 unreadCount = it[unreadSum] ?: 0,
                 id = it[ImapFolders.id].value.toString(),
                 accountId = it[ImapConfigs.id].value,
-                parentId = it[ImapFolders.parentFolder].let { parentFolderId ->
-                    if (parentFolderId?.value  == rootFolderId) null else parentFolderId.toString()
-                }
+                parentId = it[ImapFolders.parentFolder]?.toString()
             )
         }
 }
@@ -100,7 +91,6 @@ private suspend fun pushFoldersToSession(session: WebSocketServerSession, folder
  */
 suspend fun notifyFolderChange(folderId: Int) {
     val folder = Database.query { ImapFolder.findById(folderId)!! }
-    if (Database.query { folder.parentFolder } == null) return
     val user = Database.query { folder.imapConfig.owner }
     val newFolderDto = Database.query { getFoldersForUserId(user.id.value, folderId) }
     RealtimeManager.getFoldersWatcher(user.id.value).forEach { session ->

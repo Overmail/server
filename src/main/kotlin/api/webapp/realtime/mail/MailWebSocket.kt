@@ -61,6 +61,14 @@ fun Route.mailWebSocket() {
     }
 }
 
+suspend fun notifyEmailContentUpdated(emailId: Int) {
+    val sessions = RealtimeManager.getMailWatcher(emailId = emailId)
+        .filter { it.emailId == emailId }
+    sessions.forEach { session ->
+        session.session.sendSerialized<MailWebSocketEvent>(MailWebSocketEvent.ContentUpdated)
+    }
+}
+
 suspend fun pushMailToSession(session: RealtimeSubscription.MailSubscription, mail: Email) {
     session.session.sendSerialized<MailWebSocketEvent>(
         MailWebSocketEvent.MetadataChanged(
@@ -127,6 +135,10 @@ sealed class MailWebSocketEvent {
             }
         }
     }
+
+    @Serializable
+    @SerialName("content_updated")
+    object ContentUpdated : MailWebSocketEvent()
 
     @Serializable
     @SerialName("deleted")

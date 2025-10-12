@@ -6,6 +6,7 @@ import dev.babies.overmail.api.auth.logout.logout
 import dev.babies.overmail.api.mail.item.content.html.getMailHtmlContent
 import dev.babies.overmail.api.mail.item.content.text.getMailTextContent
 import dev.babies.overmail.api.mail.item.read.setReadState
+import dev.babies.overmail.api.mail.item.refresh.refreshEmail
 import dev.babies.overmail.api.webapp.realtime.folders.foldersWebSocket
 import dev.babies.overmail.api.webapp.realtime.mail.mailWebSocket
 import dev.babies.overmail.api.webapp.realtime.mails.mailsWebSocket
@@ -39,6 +40,9 @@ fun Application.configureRouting() {
                     }
                     route("/read") {
                         setReadState()
+                    }
+                    route("/refresh") {
+                        refreshEmail()
                     }
                 }
             }

@@ -35,9 +35,12 @@ object RealtimeManager {
         }
     }
 
-    suspend fun getMailWatcher(userId: Int, emailId: Int): Set<RealtimeSubscription.MailSubscription> {
+    suspend fun getMailWatcher(userId: Int? = null, emailId: Int): Set<RealtimeSubscription.MailSubscription> {
         return editMutex.withLock {
-            sessions.getOrDefault(userId, emptySet()).filterIsInstance<RealtimeSubscription.MailSubscription>()
+            val sessions = (if (userId == null) sessions.values.flatten()
+            else sessions.getOrDefault(userId, emptySet()))
+
+            sessions.filterIsInstance<RealtimeSubscription.MailSubscription>()
                 .filter { it.emailId == emailId }
                 .toSet()
         }

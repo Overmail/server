@@ -25,6 +25,12 @@ class Email(id: EntityID<Int>) : IntEntity(id) {
     var folderUid by Emails.folderUid
     var rawSource by Emails.rawSource
     var isRemoved by Emails.isRemoved
+    var state by Emails.state
+
+    enum class State {
+        Pending,
+        Imported
+    }
 }
 
 object Emails : IntIdTable("emails") {
@@ -40,4 +46,5 @@ object Emails : IntIdTable("emails") {
     val folderUid = long("folder_uid")
     val rawSource = blob("raw_source")
     val isRemoved = bool("is_removed").default(false)
+    val state = enumerationByName("state", 16, Email.State::class)
 }

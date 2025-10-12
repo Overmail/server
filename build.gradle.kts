@@ -20,18 +20,21 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.server.netty)
 
-    implementation(libs.jakarta.mail)
-
     implementation(libs.exposed.core)
     implementation(libs.exposed.dao)
     implementation(libs.exposed.kotlin.datetime)
     implementation(libs.exposed.jdbc)
     implementation(libs.postgresql)
     implementation(libs.logback.classic)
+
+    implementation(libs.koin.ktor)
+    implementation(libs.koin.logger.slf4j)
+
+    implementation(libs.kamel)
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(24)
 
     compilerOptions {
         freeCompilerArgs.add("-Xopt-in=kotlin.time.ExperimentalTime")
