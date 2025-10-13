@@ -83,7 +83,6 @@ class MailsDaemon(
                     .let { requests -> requests.forEach { pendingMessages.send(it) } }
             }
 
-            System.setProperty("java.io.tmpdir", "/tmp")
             for (request in pendingMessages) {
                 if (!isActive) break
 
