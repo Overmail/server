@@ -95,19 +95,20 @@ class MailsDaemon(
                     val importId = Uuid.random()
                     val rawFile = File.createTempFile("overmail-email-content-$importId", ".eml")
                     run downloadMessageToDisk@{
+                        val rawOriginalFile = File.createTempFile("overmail-email-content-$importId-raw", ".eml")
                         val rawMessage = folder.getMessageByUID(email.folderUid)
                         if (rawMessage == null) {
                             logger.error("Failed to import email ${email.id.value} (UID: ${email.folderUid}): Message not found on server")
                             return@withFolder
                         }
-                        rawFile.outputStream().use {
+                        rawOriginalFile.outputStream().use {
                             rawMessage.writeTo(it)
                         }
 
                         // Replace utf-8 in Transfer Encoding as this causes problems with the JavaMail parser.
                         // This is a rare edge case; however, it has been observed by the very author of this in
                         // an e-mail from the state and university library of Dresden.
-                        val rawInputStream = rawFile.inputStream()
+                        val rawInputStream = rawOriginalFile.inputStream()
                         rawInputStream.use { fis ->
                             rawFile.outputStream().use { fos ->
                                 val reader = BufferedReader(InputStreamReader(fis))
@@ -117,6 +118,7 @@ class MailsDaemon(
                                             fos.write("Content-Transfer-Encoding: 8bit\r\n".toByteArray())
                                         } else {
                                             fos.write((line + "\r\n").toByteArray())
+                                            fos.flush()
                                         }
                                     }
                                 }
@@ -154,10 +156,12 @@ class MailsDaemon(
                                         when {
                                             contentType.contains("text/plain") && content is String -> {
                                                 textOutputStream.write(content.toByteArray())
+                                                textOutputStream.flush()
                                             }
 
                                             contentType.contains("text/html") && content is String -> {
                                                 htmlOutputStream.write(content.toByteArray())
+                                                htmlOutputStream.flush()
                                             }
 
                                             content is Multipart -> {
