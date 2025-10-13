@@ -44,7 +44,7 @@ class MailsDaemon(
         }
     }
 
-    private val pendingMessages = Channel<ImportRequest>(capacity = Channel.UNLIMITED)
+    val pendingMessages = Channel<ImportRequest>(capacity = Channel.UNLIMITED)
 
     init {
         coroutineScope.launch {

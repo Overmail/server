@@ -29,7 +29,7 @@ class FolderDaemon(
     private val idleDaemons = mutableMapOf<ImapConfigId, IdleDaemon>()
     val storeInstances = mutableMapOf<FolderId, StoreInstance>()
     private val importInstances = mutableMapOf<FolderId, StoreInstance>()
-    private val mailsDaemons = mutableMapOf<FolderId, MailsDaemon>()
+    val mailsDaemons = mutableMapOf<FolderId, MailsDaemon>()
 
     init {
         coroutineScope.launch {

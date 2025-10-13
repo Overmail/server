@@ -7,6 +7,7 @@ import dev.babies.overmail.api.mail.item.content.html.getMailHtmlContent
 import dev.babies.overmail.api.mail.item.content.text.getMailTextContent
 import dev.babies.overmail.api.mail.item.read.setReadState
 import dev.babies.overmail.api.webapp.email.getEmailMetadata
+import dev.babies.overmail.api.webapp.email.reloadEmail
 import dev.babies.overmail.api.webapp.folder.getFolderMetadata
 import dev.babies.overmail.api.webapp.folder.list.getMails
 import dev.babies.overmail.api.webapp.sidebar.folders.sidebarFolders
@@ -40,6 +41,9 @@ fun Application.configureRouting() {
                     }
                     route("/read") {
                         setReadState()
+                    }
+                    route("/reload") {
+                        reloadEmail()
                     }
                 }
             }
