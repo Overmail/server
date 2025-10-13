@@ -44,6 +44,9 @@ jobs:
     name: 🛠️ Merge Docker Images
     runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: build-docker
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Install Docker Buildx
         uses: docker/setup-buildx-action@v3
