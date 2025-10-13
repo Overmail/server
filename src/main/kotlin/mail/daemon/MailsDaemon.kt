@@ -124,6 +124,8 @@ class MailsDaemon(
                                 }
                             }
                         }
+
+                        rawOriginalFile.delete()
                     }
 
 
