@@ -12,7 +12,9 @@ class ImapFolder(id: EntityID<Int>) : IntEntity(id) {
     var imapConfig by ImapConfig referencedOn ImapFolders.imapConfig
     var folderName by ImapFolders.folderName
     var parentFolder by ImapFolder optionalReferencedOn ImapFolders.parentFolder
-    val children by ImapFolder optionalBackReferencedOn ImapFolders.parentFolder
+    var folderPath by ImapFolders.folderPath
+    val children by ImapFolder optionalReferrersOn ImapFolders.parentFolder
+    val emails by Email referrersOn Emails.folder
 
     fun getPath(): List<String> {
         if (parentFolder == null) return listOf(folderName)
@@ -24,9 +26,10 @@ class ImapFolder(id: EntityID<Int>) : IntEntity(id) {
 object ImapFolders : IntIdTable("imap_folder") {
     val imapConfig = reference("imap_config", ImapConfigs, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE)
     val folderName = varchar("folder_name", length = 128)
+    val folderPath = varchar("folder_path", length = 1024)
     val parentFolder = reference("parent_folder", ImapFolders, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE).nullable()
 
     init {
-        uniqueIndex(imapConfig, folderName)
+        uniqueIndex(imapConfig, folderName, parentFolder)
     }
 }

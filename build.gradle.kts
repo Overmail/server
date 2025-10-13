@@ -34,6 +34,7 @@ kotlin {
     jvmToolchain(21)
 
     compilerOptions {
+        optIn.add("kotlin.uuid.ExperimentalUuidApi")
         freeCompilerArgs.add("-Xopt-in=kotlin.time.ExperimentalTime")
         freeCompilerArgs.add("-Xnested-type-aliases")
         freeCompilerArgs.add("-Xcontext-parameters")

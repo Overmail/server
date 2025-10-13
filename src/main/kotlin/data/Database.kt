@@ -1,9 +1,10 @@
 package dev.babies.overmail.data
 
 import dev.babies.overmail.data.model.*
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.SchemaUtils
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.transactions.experimental.newSuspendedTransaction
 
 object Database {
 
@@ -22,15 +23,16 @@ object Database {
         )
     }
 
-    fun init() {
+    suspend fun init() {
         query {
             SchemaUtils.create(Users)
-            SchemaUtils.create(ImapConfigs, Emails, EmailUsers, EmailSenders, EmailRecipients, ImapFolders)
+            SchemaUtils.create(ImapConfigs, Emails, EmailContent, EmailUsers, EmailSenders, EmailRecipients, ImapFolders)
         }
     }
 
-    fun <T> query(statement: () -> T): T {
-        return transaction(db) {
+    suspend fun <T> query(statement: suspend () -> T): T {
+        @Suppress("DEPRECATION")
+        return newSuspendedTransaction(Dispatchers.IO, db) {
             statement()
         }
     }

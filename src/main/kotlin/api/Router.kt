@@ -6,9 +6,10 @@ import dev.babies.overmail.api.auth.logout.logout
 import dev.babies.overmail.api.mail.item.content.html.getMailHtmlContent
 import dev.babies.overmail.api.mail.item.content.text.getMailTextContent
 import dev.babies.overmail.api.mail.item.read.setReadState
-import dev.babies.overmail.api.webapp.realtime.folders.foldersWebSocket
-import dev.babies.overmail.api.webapp.realtime.mail.mailWebSocket
-import dev.babies.overmail.api.webapp.realtime.mails.mailsWebSocket
+import dev.babies.overmail.api.webapp.email.getEmailMetadata
+import dev.babies.overmail.api.webapp.folder.getFolderMetadata
+import dev.babies.overmail.api.webapp.folder.list.getMails
+import dev.babies.overmail.api.webapp.sidebar.folders.sidebarFolders
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 
@@ -44,17 +45,25 @@ fun Application.configureRouting() {
             }
 
             route("/webapp") {
-                route("/realtime") {
-                    route("/folder") {
-                        foldersWebSocket()
+                route("/sidebar") {
+                    route("/folders") {
+                        sidebarFolders()
                     }
+                }
 
-                    route("/mails") {
-                        mailsWebSocket()
+                route("/folder") {
+                    route("/{folderId}") {
+                        getFolderMetadata()
+
+                        route("/list") {
+                            getMails()
+                        }
                     }
+                }
 
-                    route("/mail") {
-                        mailWebSocket()
+                route("/email") {
+                    route("/{emailId}") {
+                        getEmailMetadata()
                     }
                 }
             }

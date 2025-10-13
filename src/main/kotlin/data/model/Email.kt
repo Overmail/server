@@ -12,8 +12,6 @@ class Email(id: EntityID<Int>) : IntEntity(id) {
     companion object : IntEntityClass<Email>(Emails)
 
     var subject by Emails.subject
-    var textBody by Emails.textBody
-    var htmlBody by Emails.htmlBody
     var isRead by Emails.isRead
     var sentBy by EmailUser via EmailSenders
     val receivedBy by EmailRecipient referrersOn EmailRecipients.email
@@ -23,14 +21,17 @@ class Email(id: EntityID<Int>) : IntEntity(id) {
     var folder by ImapFolder referencedOn Emails.folder
     var imapConfig by ImapConfig referencedOn Emails.imapConfig
     var folderUid by Emails.folderUid
-    var rawSource by Emails.rawSource
     var isRemoved by Emails.isRemoved
+    var state by Emails.state
+
+    enum class State {
+        Pending,
+        Imported
+    }
 }
 
 object Emails : IntIdTable("emails") {
     val subject = varchar("subject", length = 1024).nullable()
-    val textBody = text("text_body")
-    val htmlBody = text("html_body").nullable()
     val isRead = bool("is_read")
     val createdAt = timestamp("created_at").defaultExpression(CurrentTimestamp)
     val sentAt = timestamp("sent_at")
@@ -38,6 +39,6 @@ object Emails : IntIdTable("emails") {
     val imapConfig = reference("imap_config", ImapConfigs, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE)
     val folder = reference("folder", ImapFolders, onDelete = ReferenceOption.CASCADE, onUpdate = ReferenceOption.CASCADE)
     val folderUid = long("folder_uid")
-    val rawSource = blob("raw_source")
     val isRemoved = bool("is_removed").default(false)
+    val state = enumerationByName("state", 16, Email.State::class)
 }

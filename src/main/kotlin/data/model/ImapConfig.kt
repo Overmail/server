@@ -18,6 +18,8 @@ class ImapConfig(id: EntityID<Int>) : IntEntity(id) {
     var email by ImapConfigs.email
     var owner by User referencedOn ImapConfigs.owner
     var createdAt by ImapConfigs.createdAt
+
+    val folders by ImapFolder referrersOn ImapFolders.imapConfig
 }
 
 object ImapConfigs : IntIdTable("imap_configs") {
