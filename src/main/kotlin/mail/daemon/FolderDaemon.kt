@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import jakarta.mail.Folder as JakartaFolder
@@ -31,6 +32,8 @@ class FolderDaemon(
     private val importInstances = mutableMapOf<FolderId, StoreInstance>()
     val mailsDaemons = mutableMapOf<FolderId, MailsDaemon>()
 
+    val folderImporterMutex = Mutex()
+
     init {
         coroutineScope.launch {
             store.connect(imapConfig.username, imapConfig.password)
@@ -46,7 +49,9 @@ class FolderDaemon(
             }
 
             while (isActive) {
-                loadAllFolders()
+                folderImporterMutex.withLock {
+                    loadAllFolders()
+                }
                 delay(1.minutes)
             }
         }
@@ -79,11 +84,16 @@ class FolderDaemon(
                 }
             } else null
 
+
+            val parentFolderChildrenCount =
+                parentFolder?.children?.count() ?: ImapFolder.find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.parentFolder.isNull()) }.count()
+
             return@query ImapFolder.new {
                 this@new.imapConfig = this@FolderDaemon.imapConfig
-                this.folderPath = folderPath.joinToString("/")
+                this.folderPath = folderPath.joinToString("/").dropWhile { it == defaultFolder!!.separator }
                 this.folderName = folder.name
                 this.parentFolder = parentFolder
+                this.order = (parentFolderChildrenCount + 1) * 100f
             }
         }
 
@@ -158,6 +168,13 @@ class FolderDaemon(
         )
         mailsDaemons[dbFolderId] = daemon
     }
+
+    /**
+     * @return A store instance that is very likely to be ready to use.
+     */
+    fun getStoreInstance(): StoreInstance {
+        return storeInstances.values.firstOrNull { it.isReady } ?: storeInstances.values.random()
+    }
 }
 
 class StoreInstance(
@@ -168,6 +185,8 @@ class StoreInstance(
     private var store: Store? = null
     private var closeJob: Job? = null
     private val mutex = Mutex()
+    val isReady: Boolean
+        get() = !mutex.isLocked
 
     suspend fun <T> withStore(block: suspend (store: Store) -> T): T {
         return mutex.withLock {

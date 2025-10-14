@@ -3,6 +3,7 @@ package dev.babies.overmail.api
 import dev.babies.overmail.api.auth.check.authCheck
 import dev.babies.overmail.api.auth.form.formLogin
 import dev.babies.overmail.api.auth.logout.logout
+import dev.babies.overmail.api.folder.item.moveFolder
 import dev.babies.overmail.api.mail.item.content.html.getMailHtmlContent
 import dev.babies.overmail.api.mail.item.content.text.getMailTextContent
 import dev.babies.overmail.api.mail.item.read.setReadState
@@ -27,6 +28,14 @@ fun Application.configureRouting() {
                 }
                 route("/logout") {
                     logout()
+                }
+            }
+
+            route("/folder") {
+                route("/{folderId}") {
+                    route("/move") {
+                        moveFolder()
+                    }
                 }
             }
 
