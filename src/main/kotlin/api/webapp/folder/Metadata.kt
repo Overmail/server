@@ -10,6 +10,7 @@ import io.ktor.server.routing.get
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.v1.core.Count
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 
@@ -23,7 +24,10 @@ fun Route.getFolderMetadata() {
                     name = folder.folderName,
                     emailCount = Emails
                         .select(Count(Emails.id))
-                        .where { Emails.folder eq folder.id }
+                        .where {
+                            (Emails.folder eq folder.id) and
+                                    (Emails.isRemoved eq false)
+                        }
                         .first()[Count(Emails.id)]
                         .toInt()
                 )

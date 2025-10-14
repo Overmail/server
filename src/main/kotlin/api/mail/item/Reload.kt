@@ -1,6 +1,7 @@
-package dev.babies.overmail.api.webapp.email
+package dev.babies.overmail.api.mail.item
 
 import dev.babies.overmail.api.AUTHENTICATION_NAME
+import dev.babies.overmail.api.webapp.email.getEmail
 import dev.babies.overmail.data.Database
 import dev.babies.overmail.mail.daemon.DaemonManagerPlugin
 import dev.babies.overmail.mail.daemon.ImportRequest

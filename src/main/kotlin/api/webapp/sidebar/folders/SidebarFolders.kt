@@ -47,7 +47,7 @@ fun Route.sidebarFolders() {
                             "ARCHIVE" -> "archive"
                             else -> "other"
                         },
-                        unreadCount = this.emails.count { !it.isRead },
+                        unreadCount = this.emails.count { !it.isRead && !it.isRemoved },
                         children = this.children.map { it.mapFolder() }
                     )
                 }

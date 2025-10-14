@@ -11,6 +11,7 @@ import io.ktor.server.routing.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
@@ -22,7 +23,7 @@ fun Route.getMails() {
             Database.query {
                 val mails = Emails
                     .selectAll()
-                    .where { Emails.folder eq folder.id }
+                    .where { (Emails.folder eq folder.id) and (Emails.isRemoved eq false) }
                     .orderBy(Emails.sentAt, order = SortOrder.DESC)
                     .map { Email.wrapRow(it) }
 

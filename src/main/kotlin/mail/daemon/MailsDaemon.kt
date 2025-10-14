@@ -15,10 +15,12 @@ import kotlinx.io.IOException
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.statements.api.ExposedBlob
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -50,6 +52,7 @@ class MailsDaemon(
         coroutineScope.launch {
             while (isActive) {
                 logger.info("Updating folder")
+                var uids = mutableListOf<Long>()
                 storeInstance.withFolder(serverFolderName) { folder ->
                     val totalMessages = folder.messageCount
                     for (start in 1..totalMessages step 200) {
@@ -64,9 +67,20 @@ class MailsDaemon(
                         logger.debug("Upserting ${messages.size} messages from $start to $end")
                         messages.forEach { message ->
                             val uid = folder.getUID(message)
+                            uids.add(uid)
                             upsertMessage(message, uid, false)
                         }
                     }
+                }
+
+                Database.query {
+                    Emails
+                        .update(
+                            where = {
+                                (Emails.folder eq dbFolder.id.value) and (Emails.folderUid notInList uids) and (Emails.isRemoved eq false)
+                            },
+                            body = { it[Emails.isRemoved] = true }
+                        )
                 }
 
                 delay((60..120).random().seconds)
@@ -78,7 +92,12 @@ class MailsDaemon(
                 Emails
                     .leftJoin(EmailContent)
                     .select(Emails.id)
-                    .where { EmailContent.id.isNull() and (Emails.state eq Email.State.Pending) and (Emails.folder eq dbFolder.id) }
+                    .where {
+                        EmailContent.id.isNull() and
+                                (Emails.state eq Email.State.Pending) and
+                                (Emails.folder eq dbFolder.id) and
+                                (Emails.isRemoved eq false)
+                    }
                     .map { ImportRequest(it[Emails.id].value, false) }
                     .let { requests -> requests.forEach { pendingMessages.send(it) } }
             }
@@ -325,12 +344,10 @@ class MailsDaemon(
 
         if (!isNew) {
             val isSeenOnMailServer = Flags.Flag.SEEN in message.flags
-            val isSeenInDatabase = email.isRead
 
-            if (isSeenOnMailServer != isSeenInDatabase) {
-                Database.query {
-                    email.isRead = isSeenOnMailServer
-                }
+            Database.query {
+                email.isRemoved = false
+                email.isRead = isSeenOnMailServer
             }
         }
     }
@@ -339,7 +356,7 @@ class MailsDaemon(
         val name = name
             .trim()
             .takeIf { it.isNotEmpty() }
-        return EmailUser.find { EmailUsers.email eq email }.firstOrNull() ?: EmailUser.new {
+        return EmailUser.find { (EmailUsers.email eq email) and (EmailUsers.displayName eq (name ?: email)) }.firstOrNull() ?: EmailUser.new {
             this.displayName = name ?: email
             this.email = email
         }
