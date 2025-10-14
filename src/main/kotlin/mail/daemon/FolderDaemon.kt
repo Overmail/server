@@ -152,7 +152,7 @@ class FolderDaemon(
                     coroutineScope.launch {
                         println("New message: $newMessageUid in ${dbFolder.folderPath}")
                         val mailsDaemon = mailsDaemons[dbFolderId]!!
-                        mailsDaemon.upsertMessage(newMessageUid, true)
+                        mailsDaemon.upsertMessage(newMessageUid)
                     }
                 }
             )

@@ -40,9 +40,9 @@ class MailsDaemon(
 
     private val logger = KtorSimpleLogger("${dbFolder.folderPath}/MailsDaemon@${imapConfig.host}")
 
-    suspend fun upsertMessage(uid: Long, fromIdle: Boolean) {
+    suspend fun upsertMessage(uid: Long) {
         storeInstance.withFolder(serverFolderName) { folder ->
-            folder.getMessageByUID(uid)?.let { upsertMessage(it, uid, fromIdle) }
+            folder.getMessageByUID(uid)?.let { upsertMessage(it, uid) }
         }
     }
 
@@ -68,7 +68,7 @@ class MailsDaemon(
                         messages.forEach { message ->
                             val uid = folder.getUID(message)
                             uids.add(uid)
-                            upsertMessage(message, uid, false)
+                            upsertMessage(message, uid)
                         }
                     }
                 }
@@ -113,9 +113,9 @@ class MailsDaemon(
                 contentImporterInstance.withFolder(serverFolderName) { folder ->
                     val importId = Uuid.random()
                     val rawFile = File.createTempFile("overmail-email-content-$importId", ".eml")
+                    val rawMessage = folder.getMessageByUID(email.folderUid)
                     run downloadMessageToDisk@{
                         val rawOriginalFile = File.createTempFile("overmail-email-content-$importId-raw", ".eml")
-                        val rawMessage = folder.getMessageByUID(email.folderUid)
                         if (rawMessage == null) {
                             logger.error("Failed to import email ${email.id.value} (UID: ${email.folderUid}): Message not found on server")
                             return@withFolder
@@ -154,6 +154,11 @@ class MailsDaemon(
                     val message = rawFile.inputStream().use {
                         MimeMessage(Session.getDefaultInstance(Properties()), it)
                     }
+                    message.flags.clearUserFlags()
+                    message.flags.clearSystemFlags()
+                    rawMessage.flags.systemFlags.forEach { flag -> message.setFlag(flag, true) }
+                    rawMessage.flags.userFlags.forEach { flag -> message.flags.add(flag) }
+                    upsertMessage(message = message, uid = email.folderUid, forceUpdateOfUsers = request.forceUpdate)
 
                     textFile.outputStream().use { textOutputStream ->
                         htmlFile.outputStream().use { htmlOutputStream ->
@@ -240,13 +245,14 @@ class MailsDaemon(
         }
     }
 
-    private suspend fun upsertMessage(message: Message, uid: Long, fromIdle: Boolean) {
-        try {
-            message.allHeaders
-        } catch (e: FolderClosedException) {
-            println("Folder closed, from idle: $fromIdle")
-            throw e
-        }
+    /**
+     * @param forceUpdateOfUsers If true, senders and recipients will be updated regardless of whether they already exist.
+     */
+    private suspend fun upsertMessage(
+        message: Message,
+        uid: Long,
+        forceUpdateOfUsers: Boolean = false,
+    ) {
         val messageId = message.getHeader("Message-ID")?.firstOrNull() ?:
             "overmail-fallback-message-id-${imapConfig.id.value}-${message.subject.orEmpty().hashCode()}-${message.sentDate.toInstant().toEpochMilli()}"
 
@@ -256,40 +262,6 @@ class MailsDaemon(
                 .firstOrNull()
 
             if (existing == null) {
-
-                val sentByIds = message.from
-                    .filterIsInstance<InternetAddress>()
-                    .map { from ->
-                        getEmailUserOrCreate(from.personal?.takeIf { it.isNotBlank() } ?: from.address,
-                            from.address).id.value
-                    }
-                    .distinct()
-
-                val recipientIds = message.getRecipients(Message.RecipientType.TO)
-                    .orEmpty()
-                    .filterIsInstance<InternetAddress>()
-                    .map { to ->
-                        getEmailUserOrCreate(to.personal?.takeIf { it.isNotBlank() } ?: to.address, to.address).id.value
-                    }
-                    .distinct()
-
-                val ccRecipientIds = message.getRecipients(Message.RecipientType.CC)
-                    .orEmpty()
-                    .filterIsInstance<InternetAddress>()
-                    .map { cc ->
-                        getEmailUserOrCreate(cc.personal?.takeIf { it.isNotBlank() } ?: cc.address, cc.address).id.value
-                    }
-                    .distinct()
-
-                val bccRecipientIds = message.getRecipients(Message.RecipientType.BCC)
-                    .orEmpty()
-                    .filterIsInstance<InternetAddress>()
-                    .map { bcc ->
-                        getEmailUserOrCreate(bcc.personal?.takeIf { it.isNotBlank() } ?: bcc.address,
-                            bcc.address).id.value
-                    }
-                    .distinct()
-
                 val email = Email.new {
                     this.subject = message.subject?.takeIf { it.isNotEmpty() }
                     this.isRead = Flags.Flag.SEEN in message.flags
@@ -301,45 +273,82 @@ class MailsDaemon(
                     this.isRemoved = false
                     this.state = Email.State.Pending
                 }
-                EmailSenders.deleteWhere { EmailSenders.email eq email.id }
-                EmailRecipients.deleteWhere { EmailRecipients.email eq email.id }
-
-                sentByIds.forEach { sentById ->
-                    EmailSenders.insert {
-                        it[this.email] = email.id
-                        it[this.sender] = sentById
-                    }
-                }
-
-                recipientIds.forEach { recipientId ->
-                    EmailRecipients.insert {
-                        it[this.email] = email.id
-                        it[this.recipient] = recipientId
-                        it[this.type] = RecipientType.To
-                    }
-                }
-
-                ccRecipientIds.forEach { ccRecipientId ->
-                    EmailRecipients.insert {
-                        it[this.email] = email.id
-                        it[this.recipient] = ccRecipientId
-                        it[this.type] = RecipientType.Cc
-                    }
-                }
-
-                bccRecipientIds.forEach { bccRecipientId ->
-                    EmailRecipients.insert {
-                        it[this.email] = email.id
-                        it[this.recipient] = bccRecipientId
-                        it[this.type] = RecipientType.Bcc
-                    }
-                }
 
                 pendingMessages.send(ImportRequest(email.id.value, false))
 
                 return@query email to true
             }
+
             return@query existing to false
+        }
+
+        if (isNew || forceUpdateOfUsers) Database.query {
+            val sentByIds = message.from
+                .filterIsInstance<InternetAddress>()
+                .map { from ->
+                    getEmailUserOrCreate(from.personal?.takeIf { it.isNotBlank() } ?: from.address,
+                        from.address).id.value
+                }
+                .distinct()
+
+            val recipientIds = message.getRecipients(Message.RecipientType.TO)
+                .orEmpty()
+                .filterIsInstance<InternetAddress>()
+                .map { to ->
+                    getEmailUserOrCreate(to.personal?.takeIf { it.isNotBlank() } ?: to.address, to.address).id.value
+                }
+                .distinct()
+
+            val ccRecipientIds = message.getRecipients(Message.RecipientType.CC)
+                .orEmpty()
+                .filterIsInstance<InternetAddress>()
+                .map { cc ->
+                    getEmailUserOrCreate(cc.personal?.takeIf { it.isNotBlank() } ?: cc.address, cc.address).id.value
+                }
+                .distinct()
+
+            val bccRecipientIds = message.getRecipients(Message.RecipientType.BCC)
+                .orEmpty()
+                .filterIsInstance<InternetAddress>()
+                .map { bcc ->
+                    getEmailUserOrCreate(bcc.personal?.takeIf { it.isNotBlank() } ?: bcc.address,
+                        bcc.address).id.value
+                }
+                .distinct()
+
+            EmailSenders.deleteWhere { EmailSenders.email eq email.id }
+            EmailRecipients.deleteWhere { EmailRecipients.email eq email.id }
+
+            sentByIds.forEach { sentById ->
+                EmailSenders.insert {
+                    it[this.email] = email.id
+                    it[this.sender] = sentById
+                }
+            }
+
+            recipientIds.forEach { recipientId ->
+                EmailRecipients.insert {
+                    it[this.email] = email.id
+                    it[this.recipient] = recipientId
+                    it[this.type] = RecipientType.To
+                }
+            }
+
+            ccRecipientIds.forEach { ccRecipientId ->
+                EmailRecipients.insert {
+                    it[this.email] = email.id
+                    it[this.recipient] = ccRecipientId
+                    it[this.type] = RecipientType.Cc
+                }
+            }
+
+            bccRecipientIds.forEach { bccRecipientId ->
+                EmailRecipients.insert {
+                    it[this.email] = email.id
+                    it[this.recipient] = bccRecipientId
+                    it[this.type] = RecipientType.Bcc
+                }
+            }
         }
 
         if (!isNew) {

@@ -41,14 +41,17 @@ fun Route.sidebarFolders() {
                         type = when (this.folderName.uppercase()) {
                             "INBOX" -> "inbox"
                             "SENT" -> "sent items"
+                            "SENT ITEMS" -> "sent items"
                             "TRASH" -> "trash"
                             "DRAFTS" -> "drafts"
                             "SPAM" -> "spam"
                             "ARCHIVE" -> "archive"
+                            "ARCHIVED" -> "archive"
+                            "ARCHIV" -> "archive"
                             else -> "other"
                         },
                         unreadCount = this.emails.count { !it.isRead && !it.isRemoved },
-                        children = this.children.map { it.mapFolder() }
+                        children = this.children.sortedBy { it.order }.map { it.mapFolder() }
                     )
                 }
 
@@ -60,6 +63,7 @@ fun Route.sidebarFolders() {
                             folders = imapConfig
                                 .folders
                                 .filter { it.parentFolder == null }
+                                .sortedBy { it.order }
                                 .map { folder -> folder.mapFolder() }
                         )
                     }
