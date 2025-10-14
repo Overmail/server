@@ -193,7 +193,7 @@ class StoreInstance(
         ReadWrite
     }
 
-    suspend fun withFolder(fullFolderPath: String? = null, folderMode: FolderMode = FolderMode.ReadOnly, block: suspend (folder: IMAPFolder) -> Unit) = withStore { store ->
+    suspend fun <T> withFolder(fullFolderPath: String? = null, folderMode: FolderMode = FolderMode.ReadOnly, block: suspend (folder: IMAPFolder) -> T): T = withStore { store ->
         requireNotNull(fullFolderPath ?: defaultFolderName) { "Folder path is null" }
         val folder = store.getFolder(fullFolderPath ?: defaultFolderName)
         try {
@@ -201,7 +201,7 @@ class StoreInstance(
                 FolderMode.ReadOnly -> folder.open(JakartaFolder.READ_ONLY)
                 FolderMode.ReadWrite -> folder.open(JakartaFolder.READ_WRITE)
             }
-            block(folder as IMAPFolder)
+            return@withStore block(folder as IMAPFolder)
         } finally {
             folder.close(false)
         }

@@ -14,7 +14,7 @@ suspend fun ApplicationCall.getEmail(): Pair<Email, User>? {
     val userId = principal.payload.getClaim("id").asInt()
     return Database.query {
         val user = User.findById(userId)!!
-        val emailId = this.parameters["emailId"]?.toInt()!!
+        val emailId = this.parameters["mailId"]?.toInt()!!
         val email = Email.findById(emailId) ?: run {
             this.respond(status = HttpStatusCode.NotFound, "Email not found")
             return@query null
