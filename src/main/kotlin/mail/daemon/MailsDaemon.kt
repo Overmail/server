@@ -348,6 +348,8 @@ class MailsDaemon(
             Database.query {
                 email.isRemoved = false
                 email.isRead = isSeenOnMailServer
+                email.folderUid = uid
+                email.folder = dbFolder
             }
         }
     }
