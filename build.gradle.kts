@@ -11,11 +11,17 @@ application {
     mainClass = "dev.babies.overmail.ApplicationKt"
 }
 
+repositories {
+    mavenCentral()
+    maven("https://gitlab.jvbabi.es/api/v4/projects/55/packages/maven")
+}
+
 dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.auth)
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.websockets)
+    implementation(libs.ktor.server.html.builder)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.server.netty)
@@ -28,6 +34,8 @@ dependencies {
     implementation(libs.exposed.jdbc)
     implementation(libs.postgresql)
     implementation(libs.logback.classic)
+
+    implementation(libs.vplanplus.commonapi)
 }
 
 kotlin {

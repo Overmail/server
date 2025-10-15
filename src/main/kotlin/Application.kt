@@ -1,6 +1,7 @@
 package dev.babies.overmail
 
 import dev.babies.overmail.api.configureAuthentication
+import dev.babies.overmail.api.configureCommonApi
 import dev.babies.overmail.api.configureRouting
 import dev.babies.overmail.api.configureWebSockets
 import dev.babies.overmail.data.Database
@@ -21,6 +22,8 @@ fun Application.module() {
     runBlocking {
         Database.init()
     }
+
+    configureCommonApi()
     configureSerialization()
     configureWebSockets()
     configureAuthentication()
