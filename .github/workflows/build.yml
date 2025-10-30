@@ -3,14 +3,53 @@ on:
   push:
     branches:
       - main
+      - 'deployment/**'
 
 permissions:
   contents: write
 
 jobs:
+  compute-image-tag:
+    name: 🔖 Compute Image Tag
+    runs-on: ubuntu-latest
+    outputs:
+      image_base_tag: ${{ steps.set_tag.outputs.IMAGE_BASE_TAG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Compute tag from branch
+        id: set_tag
+        run: |
+          # GITHUB_REF_NAME is set by GitHub Actions and contains the branch name
+          branch="${GITHUB_REF_NAME}"
+          # sanitize branch for docker tag: replace any '/' with '-'
+          safe_branch="${branch//\//-}"
+          # replace spaces with '-'
+          safe_branch="${safe_branch// /-}"
+          # convert to lowercase for docker tag safety
+          safe_branch="${safe_branch,,}"
+          if [ "${branch}" = "main" ]; then
+            tag="latest"
+          elif [[ "${branch}" == deployment/* ]]; then
+            name="${branch#deployment/}"
+            # sanitize the extracted deployment name as well
+            name="${name//\//-}"
+            name="${name// /-}"
+            name="${name,,}"
+            tag="deployment-${name}-latest"
+          else
+            tag="${safe_branch}"
+          fi
+          echo "Computed IMAGE_BASE_TAG=${tag}"
+          # Set step output in the recommended way
+          echo "IMAGE_BASE_TAG=${tag}" >> "$GITHUB_OUTPUT"
+
   build-docker:
     name: 🐳 Build Docker Image
+    needs: compute-image-tag
     runs-on: ${{ matrix.runner }}
+    env:
+      IMAGE_BASE_TAG: ${{ needs.compute-image-tag.outputs.image_base_tag }}
     strategy:
       matrix:
         platform: [ linux/amd64, linux/arm64/v8 ]
@@ -39,18 +78,21 @@ jobs:
         uses: useblacksmith/build-push-action@v2
         with:
           push: true
-          tags: ghcr.io/overmail/overmail-backend:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          # Verwende den berechneten Basis-Tag und füge eine Arch-Suffix zur Unterscheidung hinzu
+          tags: ghcr.io/overmail/overmail-backend:${{ env.IMAGE_BASE_TAG }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           platforms: ${{ matrix.platform }}
 
   merge-manifests:
-    needs: build-docker
+    needs: [build-docker, compute-image-tag]
     runs-on: blacksmith
     name: 🛠️ Merge Docker Images
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE_BASE_TAG: ${{ needs.compute-image-tag.outputs.image_base_tag }}
     steps:
-      - name: Login to DockerHub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -60,9 +102,9 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/overmail/overmail-backend:latest \
-            ghcr.io/overmail/overmail-backend:latest-amd64 \
-            ghcr.io/overmail/overmail-backend:latest-arm64
+            -t ghcr.io/overmail/overmail-backend:${{ env.IMAGE_BASE_TAG }} \
+            ghcr.io/overmail/overmail-backend:${{ env.IMAGE_BASE_TAG }}-amd64 \
+            ghcr.io/overmail/overmail-backend:${{ env.IMAGE_BASE_TAG }}-arm64
 
   dependency-submission:
     name: 📊 Submit Dependency Graph
