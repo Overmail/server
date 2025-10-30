@@ -52,7 +52,7 @@ class FolderDaemon(
         var reconnectAttempt = 0
         val maxReconnectDelay = 300 // 5 minutes max
 
-        while (isRunning && isActive) {
+        while (isRunning && coroutineScope.isActive) {
             try {
                 connectAndLoadFolders()
                 reconnectAttempt = 0 // Reset on successful connection
@@ -60,7 +60,7 @@ class FolderDaemon(
                 logger.info("Connection job cancelled")
                 throw e
             } catch (e: Exception) {
-                if (!isRunning || !isActive) break
+                if (!isRunning || !coroutineScope.isActive) break
                 
                 val delaySeconds = minOf(5 * (1 shl reconnectAttempt), maxReconnectDelay)
                 logger.error("Failed to connect to IMAP store (attempt ${reconnectAttempt + 1}), retrying in ${delaySeconds}s: ${e.message}")
@@ -92,7 +92,7 @@ class FolderDaemon(
                 }
             }
 
-            while (isRunning && isActive && store?.isConnected == true) {
+            while (isRunning && coroutineScope.isActive && store?.isConnected == true) {
                 try {
                     folderImporterMutex.withLock {
                         loadAllFolders()

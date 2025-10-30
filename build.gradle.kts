@@ -39,12 +39,18 @@ dependencies {
 }
 
 kotlin {
-    jvmToolchain(24)
+    jvmToolchain(25)
 
     compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_24)
         optIn.add("kotlin.uuid.ExperimentalUuidApi")
-        freeCompilerArgs.add("-Xopt-in=kotlin.time.ExperimentalTime")
+        optIn.add("kotlin.time.ExperimentalTime")
         freeCompilerArgs.add("-Xnested-type-aliases")
         freeCompilerArgs.add("-Xcontext-parameters")
     }
+}
+
+tasks.withType<JavaCompile> {
+    targetCompatibility = "24"
+    sourceCompatibility = "24"
 }
