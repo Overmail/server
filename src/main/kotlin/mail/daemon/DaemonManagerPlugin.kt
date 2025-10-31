@@ -5,6 +5,7 @@ import dev.babies.overmail.data.model.ImapConfig
 import dev.babies.overmail.data.model.ImapConfigs
 import io.ktor.server.application.*
 import io.ktor.util.*
+import io.ktor.util.logging.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +18,7 @@ typealias ImapConfigId = Int
 object DaemonManagerPlugin : BaseApplicationPlugin<Application, Unit, Unit> {
     override val key: AttributeKey<Unit> = io.ktor.util.AttributeKey("DaemonManagerPlugin")
 
+    private val logger = KtorSimpleLogger("DaemonManagerPlugin")
     private val imapDaemons = mutableMapOf<ImapConfigId, ImapDaemon>()
     private lateinit var coroutineScope: CoroutineScope
 
@@ -29,16 +31,34 @@ object DaemonManagerPlugin : BaseApplicationPlugin<Application, Unit, Unit> {
 
         pipeline.monitor.subscribe(ApplicationStarted) {
             coroutineScope.launch {
-                val imapConfigs = Database.query { ImapConfigs.select(ImapConfigs.id).map { it[ImapConfigs.id].value } }
-                imapConfigs.forEach { imapConfigId ->
-                    coroutineScope.launch {
-                        initImapConfig(imapConfigId)
+                try {
+                    val imapConfigs = Database.query { ImapConfigs.select(ImapConfigs.id).map { it[ImapConfigs.id].value } }
+                    logger.info("Starting ${imapConfigs.size} IMAP daemon(s)")
+                    imapConfigs.forEach { imapConfigId ->
+                        coroutineScope.launch {
+                            try {
+                                initImapConfig(imapConfigId)
+                            } catch (e: Exception) {
+                                logger.error("Failed to initialize IMAP config $imapConfigId: ${e.message}")
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    logger.error("Failed to load IMAP configs: ${e.message}")
                 }
             }
         }
 
         pipeline.monitor.subscribe(ApplicationStopped) {
+            logger.info("Stopping all IMAP daemons")
+            imapDaemons.values.forEach { daemon ->
+                try {
+                    daemon.stop()
+                } catch (e: Exception) {
+                    logger.error("Error stopping daemon: ${e.message}")
+                }
+            }
+            imapDaemons.clear()
         }
     }
 
@@ -46,13 +66,24 @@ object DaemonManagerPlugin : BaseApplicationPlugin<Application, Unit, Unit> {
     suspend fun initImapConfig(imapConfigId: Int) {
         imapDaemonChangeMutex.withLock {
             if (imapConfigId in imapDaemons) {
+                logger.info("Stopping existing daemon for IMAP config $imapConfigId")
                 val daemon = imapDaemons[imapConfigId]!!
-                daemon.stop()
+                try {
+                    daemon.stop()
+                } catch (e: Exception) {
+                    logger.error("Error stopping daemon: ${e.message}")
+                }
                 imapDaemons.remove(imapConfigId)
             }
 
-            val imapConfig = Database.query { ImapConfig[imapConfigId] }
-            imapDaemons[imapConfigId] = ImapDaemon(imapConfig, coroutineScope)
+            try {
+                val imapConfig = Database.query { ImapConfig[imapConfigId] }
+                logger.info("Starting daemon for IMAP config $imapConfigId (${imapConfig.email})")
+                imapDaemons[imapConfigId] = ImapDaemon(imapConfig, coroutineScope)
+            } catch (e: Exception) {
+                logger.error("Failed to initialize IMAP config $imapConfigId: ${e.message}")
+                throw e
+            }
         }
     }
 }

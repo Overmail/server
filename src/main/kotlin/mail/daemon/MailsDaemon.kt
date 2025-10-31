@@ -6,11 +6,8 @@ import io.ktor.util.logging.*
 import jakarta.mail.*
 import jakarta.mail.internet.InternetAddress
 import jakarta.mail.internet.MimeMessage
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.io.IOException
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -35,22 +32,41 @@ class MailsDaemon(
     private val serverFolderName: String,
     private val storeInstance: StoreInstance,
     private val contentImporterInstance: StoreInstance,
-    coroutineScope: CoroutineScope,
+    private val coroutineScope: CoroutineScope,
 ) {
 
     private val logger = KtorSimpleLogger("${dbFolder.folderPath}/MailsDaemon@${imapConfig.host}")
 
+    @Volatile
+    private var isRunning = true
+    private var syncJob: Job? = null
+    private var importJob: Job? = null
+
     suspend fun upsertMessage(uid: Long) {
-        storeInstance.withFolder(serverFolderName) { folder ->
-            folder.getMessageByUID(uid)?.let { upsertMessage(it, uid) }
+        try {
+            storeInstance.withFolder(serverFolderName) { folder ->
+                folder.getMessageByUID(uid)?.let { upsertMessage(it, uid) }
+            }
+        } catch (e: Exception) {
+            logger.error("Error upserting message $uid: ${e.message}")
         }
     }
 
     val pendingMessages = Channel<ImportRequest>(capacity = Channel.UNLIMITED)
 
     init {
-        coroutineScope.launch {
-            while (isActive) {
+        syncJob = coroutineScope.launch {
+            runSyncLoop()
+        }
+
+        importJob = coroutineScope.launch importWorker@{
+            runImportLoop()
+        }
+    }
+
+    private suspend fun runSyncLoop() {
+        while (isRunning && coroutineScope.isActive) {
+            try {
                 logger.info("Updating folder")
                 var uids = mutableListOf<Long>()
                 storeInstance.withFolder(serverFolderName) { folder ->
@@ -84,27 +100,35 @@ class MailsDaemon(
                 }
 
                 delay((60..120).random().seconds)
+            } catch (e: CancellationException) {
+                logger.info("Sync loop cancelled")
+                throw e
+            } catch (e: Exception) {
+                logger.error("Error in sync loop: ${e.message}")
+                delay(30.seconds) // Wait before retry
             }
         }
+    }
 
-        coroutineScope.launch importWorker@{
-            Database.query {
-                Emails
-                    .leftJoin(EmailContent)
-                    .select(Emails.id)
-                    .where {
-                        EmailContent.id.isNull() and
-                                (Emails.state eq Email.State.Pending) and
-                                (Emails.folder eq dbFolder.id) and
-                                (Emails.isRemoved eq false)
-                    }
-                    .map { ImportRequest(it[Emails.id].value, false) }
-                    .let { requests -> requests.forEach { pendingMessages.send(it) } }
-            }
+    private suspend fun runImportLoop() {
+        Database.query {
+            Emails
+                .leftJoin(EmailContent)
+                .select(Emails.id)
+                .where {
+                    EmailContent.id.isNull() and
+                            (Emails.state eq Email.State.Pending) and
+                            (Emails.folder eq dbFolder.id) and
+                            (Emails.isRemoved eq false)
+                }
+                .map { ImportRequest(it[Emails.id].value, false) }
+                .let { requests -> requests.forEach { pendingMessages.send(it) } }
+        }
 
-            for (request in pendingMessages) {
-                if (!isActive) break
+        for (request in pendingMessages) {
+            if (!isRunning || !coroutineScope.isActive) break
 
+            try {
                 val email = Database.query { Email.findById(request.emailId) } ?: continue
                 if (email.state != Email.State.Pending && !request.forceUpdate) continue
 
@@ -118,6 +142,7 @@ class MailsDaemon(
                         val rawOriginalFile = File.createTempFile("overmail-email-content-$importId-raw", ".eml")
                         if (rawMessage == null) {
                             logger.error("Failed to import email ${email.id.value} (UID: ${email.folderUid}): Message not found on server")
+                            rawOriginalFile.delete()
                             return@withFolder
                         }
                         rawOriginalFile.outputStream().use {
@@ -241,6 +266,12 @@ class MailsDaemon(
                         email.state = Email.State.Imported
                     }
                 }
+            } catch (e: CancellationException) {
+                logger.info("Import loop cancelled")
+                throw e
+            } catch (e: Exception) {
+                logger.error("Error importing email ${request.emailId}: ${e.message}")
+                // Continue to next message instead of stopping
             }
         }
     }
@@ -374,7 +405,21 @@ class MailsDaemon(
     }
 
     fun stop() {
-        storeInstance.close()
+        logger.info("Stopping MailsDaemon")
+        isRunning = false
+        syncJob?.cancel()
+        importJob?.cancel()
+        pendingMessages.close()
+        try {
+            storeInstance.close()
+        } catch (e: Exception) {
+            logger.error("Error closing store instance: ${e.message}")
+        }
+        try {
+            contentImporterInstance.close()
+        } catch (e: Exception) {
+            logger.error("Error closing content importer instance: ${e.message}")
+        }
     }
 }
 
