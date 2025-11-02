@@ -136,134 +136,142 @@ class MailsDaemon(
 
                 contentImporterInstance.withFolder(serverFolderName) { folder ->
                     val importId = Uuid.random()
-                    val rawFile = File.createTempFile("overmail-email-content-$importId", ".eml")
-                    val rawMessage = folder.getMessageByUID(email.folderUid)
-                    run downloadMessageToDisk@{
-                        val rawOriginalFile = File.createTempFile("overmail-email-content-$importId-raw", ".eml")
-                        if (rawMessage == null) {
-                            logger.error("Failed to import email ${email.id.value} (UID: ${email.folderUid}): Message not found on server")
-                            rawOriginalFile.delete()
-                            return@withFolder
-                        }
-                        rawOriginalFile.outputStream().use {
-                            rawMessage.writeTo(it)
+                    var rawFile: File? = null
+                    var textFile: File? = null
+                    var htmlFile: File? = null
+                    
+                    try {
+                        rawFile = File.createTempFile("overmail-email-content-$importId", ".eml")
+                        val rawMessage = folder.getMessageByUID(email.folderUid)
+                        run downloadMessageToDisk@{
+                            val rawOriginalFile = File.createTempFile("overmail-email-content-$importId-raw", ".eml")
+                            try {
+                                if (rawMessage == null) {
+                                    logger.error("Failed to import email ${email.id.value} (UID: ${email.folderUid}): Message not found on server")
+                                    return@withFolder
+                                }
+                                rawOriginalFile.outputStream().use {
+                                    rawMessage.writeTo(it)
+                                }
+
+                                // Replace utf-8 in Transfer Encoding as this causes problems with the JavaMail parser.
+                                // This is a rare edge case; however, it has been observed by the very author of this in
+                                // an e-mail from the state and university library of Dresden.
+                                val rawInputStream = rawOriginalFile.inputStream()
+                                rawInputStream.use { fis ->
+                                    rawFile.outputStream().use { fos ->
+                                        val reader = BufferedReader(InputStreamReader(fis))
+                                        reader.useLines { lines ->
+                                            lines.forEach { line ->
+                                                if (line.contains("Content-Transfer-Encoding: utf-8", ignoreCase = true)) {
+                                                    fos.write("Content-Transfer-Encoding: 8bit\r\n".toByteArray())
+                                                } else {
+                                                    fos.write((line + "\r\n").toByteArray())
+                                                    fos.flush()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } finally {
+                                rawOriginalFile.delete()
+                            }
                         }
 
-                        // Replace utf-8 in Transfer Encoding as this causes problems with the JavaMail parser.
-                        // This is a rare edge case; however, it has been observed by the very author of this in
-                        // an e-mail from the state and university library of Dresden.
-                        val rawInputStream = rawOriginalFile.inputStream()
-                        rawInputStream.use { fis ->
-                            rawFile.outputStream().use { fos ->
-                                val reader = BufferedReader(InputStreamReader(fis))
-                                reader.useLines { lines ->
-                                    lines.forEach { line ->
-                                        if (line.contains("Content-Transfer-Encoding: utf-8", ignoreCase = true)) {
-                                            fos.write("Content-Transfer-Encoding: 8bit\r\n".toByteArray())
-                                        } else {
-                                            fos.write((line + "\r\n").toByteArray())
-                                            fos.flush()
+
+                        textFile = File.createTempFile("overmail-email-content-$importId", ".txt")
+                        htmlFile = File.createTempFile("overmail-email-content-$importId", ".html")
+
+                        val message = rawFile.inputStream().use {
+                            MimeMessage(Session.getDefaultInstance(Properties()), it)
+                        }
+                        message.flags.clearUserFlags()
+                        message.flags.clearSystemFlags()
+                        rawMessage.flags.systemFlags.forEach { flag -> message.setFlag(flag, true) }
+                        rawMessage.flags.userFlags.forEach { flag -> message.flags.add(flag) }
+                        upsertMessage(message = message, uid = email.folderUid, forceUpdateOfUsers = request.forceUpdate)
+
+                        textFile.outputStream().use { textOutputStream ->
+                            htmlFile.outputStream().use { htmlOutputStream ->
+                                fun handlePart(part: Any) {
+                                    when (part) {
+                                        is String -> textOutputStream.write(part.toByteArray())
+
+                                        is Multipart -> {
+                                            for (i in 0 until part.count) {
+                                                handlePart(part.getBodyPart(i))
+                                            }
+                                        }
+
+                                        is BodyPart -> {
+                                            val disposition = part.disposition?.lowercase()
+                                            if (disposition != null && disposition == "attachment") return
+
+                                            val contentType = part.contentType.lowercase()
+                                            val content = part.content
+
+                                            when {
+                                                contentType.contains("text/plain") && content is String -> {
+                                                    textOutputStream.write(content.toByteArray())
+                                                    textOutputStream.flush()
+                                                }
+
+                                                contentType.contains("text/html") && content is String -> {
+                                                    htmlOutputStream.write(content.toByteArray())
+                                                    htmlOutputStream.flush()
+                                                }
+
+                                                content is Multipart -> {
+                                                    handlePart(content)
+                                                }
+
+                                                content is BodyPart -> {
+                                                    handlePart(content)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                val content = try {
+                                    message.content
+                                } catch (e: IOException) {
+                                    throw e
+                                }
+                                handlePart(content)
+                            }
+                        }
+
+                        textFile.inputStream().use { textInputStream ->
+                            htmlFile.inputStream().use { htmlInputStream ->
+                                rawFile.inputStream().use { rawInputStream ->
+                                    Database.query {
+                                        EmailContent.deleteWhere { EmailContent.id eq email.id }
+                                        EmailContent.insert {
+                                            val textFileLength = textFile.length()
+                                            val htmlFileLength = htmlFile.length()
+                                            val rawFileLength = rawFile.length()
+                                            it[EmailContent.id] = email.id
+                                            it[EmailContent.textContent] = if (textFileLength > 0) ExposedBlob(textInputStream) else null
+                                            it[EmailContent.textSize] = if (textFileLength > 0) textFileLength else null
+                                            it[EmailContent.htmlContent] = if (htmlFileLength > 0) ExposedBlob(htmlInputStream) else null
+                                            it[EmailContent.htmlSize] = if (htmlFileLength > 0) htmlFileLength else null
+                                            it[EmailContent.rawContent] = ExposedBlob(rawInputStream)
+                                            it[EmailContent.rawSize] = rawFileLength
                                         }
                                     }
                                 }
                             }
                         }
 
-                        rawOriginalFile.delete()
-                    }
-
-
-                    val textFile = File.createTempFile("overmail-email-content-$importId", ".txt")
-                    val htmlFile = File.createTempFile("overmail-email-content-$importId", ".html")
-
-                    val message = rawFile.inputStream().use {
-                        MimeMessage(Session.getDefaultInstance(Properties()), it)
-                    }
-                    message.flags.clearUserFlags()
-                    message.flags.clearSystemFlags()
-                    rawMessage.flags.systemFlags.forEach { flag -> message.setFlag(flag, true) }
-                    rawMessage.flags.userFlags.forEach { flag -> message.flags.add(flag) }
-                    upsertMessage(message = message, uid = email.folderUid, forceUpdateOfUsers = request.forceUpdate)
-
-                    textFile.outputStream().use { textOutputStream ->
-                        htmlFile.outputStream().use { htmlOutputStream ->
-                            fun handlePart(part: Any) {
-                                when (part) {
-                                    is String -> textOutputStream.write(part.toByteArray())
-
-                                    is Multipart -> {
-                                        for (i in 0 until part.count) {
-                                            handlePart(part.getBodyPart(i))
-                                        }
-                                    }
-
-                                    is BodyPart -> {
-                                        val disposition = part.disposition?.lowercase()
-                                        if (disposition != null && disposition == "attachment") return
-
-                                        val contentType = part.contentType.lowercase()
-                                        val content = part.content
-
-                                        when {
-                                            contentType.contains("text/plain") && content is String -> {
-                                                textOutputStream.write(content.toByteArray())
-                                                textOutputStream.flush()
-                                            }
-
-                                            contentType.contains("text/html") && content is String -> {
-                                                htmlOutputStream.write(content.toByteArray())
-                                                htmlOutputStream.flush()
-                                            }
-
-                                            content is Multipart -> {
-                                                handlePart(content)
-                                            }
-
-                                            content is BodyPart -> {
-                                                handlePart(content)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            val content = try {
-                                message.content
-                            } catch (e: IOException) {
-                                throw e
-                            }
-                            handlePart(content)
+                        Database.query {
+                            email.state = Email.State.Imported
                         }
-                    }
-
-                    textFile.inputStream().use { textInputStream ->
-                        htmlFile.inputStream().use { htmlInputStream ->
-                            rawFile.inputStream().use { rawInputStream ->
-                                Database.query {
-                                    EmailContent.deleteWhere { EmailContent.id eq email.id }
-                                    EmailContent.insert {
-                                        val textFileLength = textFile.length()
-                                        val htmlFileLength = htmlFile.length()
-                                        val rawFileLength = rawFile.length()
-                                        it[EmailContent.id] = email.id
-                                        it[EmailContent.textContent] = if (textFileLength > 0) ExposedBlob(textInputStream) else null
-                                        it[EmailContent.textSize] = if (textFileLength > 0) textFileLength else null
-                                        it[EmailContent.htmlContent] = if (htmlFileLength > 0) ExposedBlob(htmlInputStream) else null
-                                        it[EmailContent.htmlSize] = if (htmlFileLength > 0) htmlFileLength else null
-                                        it[EmailContent.rawContent] = ExposedBlob(rawInputStream)
-                                        it[EmailContent.rawSize] = rawFileLength
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    textFile.delete()
-                    htmlFile.delete()
-                    rawFile.delete()
-
-                    Database.query {
-                        email.state = Email.State.Imported
+                    } finally {
+                        // Ensure temp files are always cleaned up
+                        textFile?.delete()
+                        htmlFile?.delete()
+                        rawFile?.delete()
                     }
                 }
             } catch (e: CancellationException) {

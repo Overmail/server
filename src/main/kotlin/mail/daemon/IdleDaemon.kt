@@ -56,6 +56,8 @@ class IdleDaemon(
     private suspend fun runIdleStore() {
         var store: Store? = null
         var folder: IMAPFolder? = null
+        var messageChangedListener: MessageChangedListener? = null
+        var messageCountListener: MessageCountListener? = null
 
         try {
             store = imapDaemon.session.getStore("imap")
@@ -68,7 +70,7 @@ class IdleDaemon(
 
             var canIdle = CompletableDeferred(true)
 
-            val messageChangedListener = object : MessageChangedListener {
+            messageChangedListener = object : MessageChangedListener {
                 override fun messageChanged(e: MessageChangedEvent?) {
                     if (e == null) return
                     try {
@@ -80,7 +82,7 @@ class IdleDaemon(
                 }
             }
 
-            val messageCountListener = object : MessageCountListener {
+            messageCountListener = object : MessageCountListener {
                 override fun messagesAdded(e: MessageCountEvent?) {
                     if (e == null) return
                     try {
@@ -126,7 +128,24 @@ class IdleDaemon(
             throw e
         } finally {
             try {
-                folder?.close(false)
+                if (folder != null) {
+                    // Remove event listeners before closing to prevent memory leaks
+                    if (messageChangedListener != null) {
+                        try {
+                            folder.removeMessageChangedListener(messageChangedListener)
+                        } catch (e: Exception) {
+                            logger.debug("Error removing message changed listener: ${e.message}")
+                        }
+                    }
+                    if (messageCountListener != null) {
+                        try {
+                            folder.removeMessageCountListener(messageCountListener)
+                        } catch (e: Exception) {
+                            logger.debug("Error removing message count listener: ${e.message}")
+                        }
+                    }
+                    folder.close(false)
+                }
             } catch (e: Exception) {
                 logger.error("Error closing folder: ${e.message}")
             }
