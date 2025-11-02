@@ -128,7 +128,7 @@ class FolderDaemon(
         requireNotNull(defaultFolder) { "Default folder is not set" }
         val folderPath = folder.fullName.split(defaultFolder!!.separator)
 
-        val dbFolder = Database.query {
+        val (dbFolder, isNew) = Database.query {
             val existing = ImapFolder
                 .find {
                     (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.folderPath eq folderPath.joinToString(
@@ -137,7 +137,7 @@ class FolderDaemon(
                 }
                 .firstOrNull()
 
-            if (existing != null) return@query existing
+            if (existing != null) return@query existing to false
 
             val parentFolder = if (folderPath.size > 1) {
                 Database.query {
@@ -155,17 +155,22 @@ class FolderDaemon(
             val parentFolderChildrenCount =
                 parentFolder?.children?.count() ?: ImapFolder.find { (ImapFolders.imapConfig eq imapConfig.id.value) and (ImapFolders.parentFolder.isNull()) }.count()
 
-            return@query ImapFolder.new {
+            val newFolder = ImapFolder.new {
                 this@new.imapConfig = this@FolderDaemon.imapConfig
                 this.folderPath = folderPath.joinToString("/").dropWhile { it == defaultFolder!!.separator }
                 this.folderName = folder.name
                 this.parentFolder = parentFolder
                 this.order = (parentFolderChildrenCount + 1) * 100f
             }
+            
+            return@query newFolder to true
         }
 
-        coroutineScope.launch {
-            startMailsDaemon(folder.separator, dbFolder)
+        // Only start MailsDaemon for newly created folders
+        if (isNew) {
+            coroutineScope.launch {
+                startMailsDaemon(folder.separator, dbFolder)
+            }
         }
     }
 
