@@ -65,20 +65,22 @@ class MailsDaemon(
     }
 
     private suspend fun runSyncLoop() {
+        val fetchProfile = FetchProfile().apply {
+            add(UIDFolder.FetchProfileItem.FLAGS)
+            add(UIDFolder.FetchProfileItem.ENVELOPE)
+            add(UIDFolder.FetchProfileItem.UID)
+        }
+        
         while (isRunning && coroutineScope.isActive) {
             try {
                 logger.info("Updating folder")
-                var uids = mutableListOf<Long>()
+                val uids = mutableListOf<Long>()
                 storeInstance.withFolder(serverFolderName) { folder ->
                     val totalMessages = folder.messageCount
                     for (start in 1..totalMessages step 200) {
                         val end = minOf(start + 199, totalMessages)
                         val messages = folder.getMessages(start, end)
-                        folder.fetch(messages, FetchProfile().apply {
-                            add(UIDFolder.FetchProfileItem.FLAGS)
-                            add(UIDFolder.FetchProfileItem.ENVELOPE)
-                            add(UIDFolder.FetchProfileItem.UID)
-                        })
+                        folder.fetch(messages, fetchProfile)
 
                         logger.debug("Upserting ${messages.size} messages from $start to $end")
                         messages.forEach { message ->
