@@ -164,7 +164,9 @@ class FolderDaemon(
             }
         }
 
-        coroutineScope.launch {
+        // Only start MailsDaemon if it doesn't already exist
+        // No need to launch a coroutine since startMailsDaemon is not a suspend function
+        if (!mailsDaemons.containsKey(dbFolder.id.value)) {
             startMailsDaemon(folder.separator, dbFolder)
         }
     }
